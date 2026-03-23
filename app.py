@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, jsonify, redirect, url_for, Response
+from flask import Flask, render_template, request, jsonify, redirect, url_for, Response, session
 import sqlite3
 import os
 import json
@@ -6,42 +6,40 @@ import functools
 from datetime import datetime
 
 app = Flask(__name__)
+app.secret_key = os.environ.get('SECRET_KEY', 'serp-dashboard-secret-key')
 
 
 # ---------------------------------------------------------------------------
-# Basic Auth
+# Password-only Auth
 # ---------------------------------------------------------------------------
-
-def check_auth(password):
-    expected = os.environ.get('DASHBOARD_PASSWORD', '')
-    return expected and password == expected
-
-def require_auth():
-    return Response(
-        'Access denied', 401,
-        {'WWW-Authenticate': 'Basic realm="SERP Dashboard"'}
-    )
-
-def login_required(f):
-    @functools.wraps(f)
-    def decorated(*args, **kwargs):
-        if not os.environ.get('DASHBOARD_PASSWORD'):
-            return f(*args, **kwargs)  # no password set — open access
-        auth = request.authorization
-        if not auth or not check_auth(auth.password):
-            return require_auth()
-        return f(*args, **kwargs)
-    return decorated
-
-app.before_request_funcs.setdefault(None, [])
 
 @app.before_request
 def protect():
-    if not os.environ.get('DASHBOARD_PASSWORD'):
-        return  # no password configured, allow all
-    auth = request.authorization
-    if not auth or not check_auth(auth.password):
-        return require_auth()
+    expected = os.environ.get('DASHBOARD_PASSWORD', '')
+    if not expected:
+        return  # no password set — open access
+    if request.endpoint in ('login', 'static'):
+        return
+    if not session.get('authenticated'):
+        return redirect(url_for('login', next=request.path))
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    expected = os.environ.get('DASHBOARD_PASSWORD', '')
+    error = None
+    if request.method == 'POST':
+        if request.form.get('password') == expected:
+            session['authenticated'] = True
+            return redirect(request.args.get('next') or '/')
+        error = 'Incorrect password'
+    return render_template('login.html', error=error)
+
+@app.route('/logout')
+def logout():
+    session.clear()
+    return redirect(url_for('login'))
+
+
 DB_PATH = os.environ.get(
     'DATABASE_PATH',
     os.path.join(os.path.dirname(os.path.abspath(__file__)), 'serp_dashboard.db')
