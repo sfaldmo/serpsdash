@@ -70,6 +70,9 @@ def init_db():
     conn.close()
 
 
+# Ensure the directory for the DB file exists (needed when using a Railway volume path like /data)
+os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+
 # Run at import time so gunicorn workers always have a valid schema
 init_db()
 
