@@ -723,15 +723,27 @@ Write a concise quick analysis (5-8 bullet points max) that I can share with my 
 
 Keep it sharp, professional, and scannable. No fluff. Use plain bullet points (•)."""
 
-    import anthropic as _anthropic
-    client = _anthropic.Anthropic(api_key=api_key)
-    message = client.messages.create(
-        model='claude-sonnet-4-6',
-        max_tokens=600,
-        messages=[{'role': 'user', 'content': prompt}]
-    )
+    import urllib.request as _req
+    payload = json.dumps({
+        'model':      'claude-sonnet-4-6',
+        'max_tokens': 600,
+        'messages':   [{'role': 'user', 'content': prompt}],
+    }).encode('utf-8')
 
-    analysis = message.content[0].text
+    req = _req.Request(
+        'https://api.anthropic.com/v1/messages',
+        data=payload,
+        headers={
+            'Content-Type':      'application/json',
+            'x-api-key':         api_key,
+            'anthropic-version': '2023-06-01',
+        },
+        method='POST',
+    )
+    with _req.urlopen(req, timeout=30) as resp:
+        result = json.loads(resp.read().decode('utf-8'))
+
+    analysis = result['content'][0]['text']
     return jsonify({'ok': True, 'analysis': analysis, 'keyword': keyword_name, 'week': week_date_str})
 
 
