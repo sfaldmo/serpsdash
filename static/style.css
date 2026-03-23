@@ -653,3 +653,74 @@ tr.page-separator:hover td { background: var(--sidebar-bg); }
 }
 .btn-primary:hover { background: #2e3650; }
 .btn-primary:disabled { background: #ccc; cursor: not-allowed; }
+
+/* ---- Quick Analysis button ---- */
+.btn-analyze {
+  padding: 9px 16px;
+  background: #7c3aed;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background .15s;
+  font-family: inherit;
+}
+.btn-analyze:hover { background: #6d28d9; }
+
+/* ---- Analysis modal ---- */
+#analysis-modal {
+  background: #fff;
+  border-radius: 10px;
+  width: 680px;
+  max-width: 95vw;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 20px 60px rgba(0,0,0,.25);
+}
+#analysis-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 22px 26px 18px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+#analysis-modal-header h2 { font-size: 20px; font-weight: 700; color: #7c3aed; }
+#analysis-modal-close {
+  background: none; border: none; font-size: 26px;
+  cursor: pointer; color: var(--text-muted); line-height: 1;
+}
+#analysis-modal-close:hover { color: var(--text); }
+
+#analysis-modal-body {
+  padding: 22px 26px 26px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+#analysis-meta {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: .5px;
+}
+#analysis-content p {
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.7;
+  color: var(--text);
+  padding: 4px 0;
+}
+.analysis-loading {
+  font-size: 16px;
+  color: var(--text-muted);
+  font-style: italic;
+}
+.analysis-error {
+  color: var(--red);
+}
