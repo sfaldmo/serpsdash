@@ -614,8 +614,6 @@ def api_stats():
 @app.route('/api/analyze', methods=['POST'])
 def api_analyze():
     data       = request.get_json(force=True)
-    keyword_id = data.get('keyword_id', type(0) and data.get('keyword_id'))
-    week_id    = data.get('week_id')
     keyword_id = int(data.get('keyword_id', 0))
     week_id    = int(data.get('week_id', 0))
 

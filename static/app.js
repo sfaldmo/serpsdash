@@ -565,7 +565,10 @@ function setupAnalysisModal() {
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify({ keyword_id: activeKeywordId, week_id: activeWeekId }),
     })
-      .then(r => r.json())
+      .then(r => {
+        if (!r.ok) return r.text().then(t => { throw new Error(`Server error ${r.status}: ${t.slice(0, 200)}`); });
+        return r.json();
+      })
       .then(data => {
         if (data.ok) {
           meta.textContent = `${data.keyword} — ${data.week}`;
@@ -580,8 +583,8 @@ function setupAnalysisModal() {
           content.innerHTML = `<p class="analysis-error">${escHtml(data.error || 'Analysis failed.')}</p>`;
         }
       })
-      .catch(() => {
-        content.innerHTML = '<p class="analysis-error">Network error.</p>';
+      .catch(err => {
+        content.innerHTML = `<p class="analysis-error">${escHtml(err.message || 'Request failed.')}</p>`;
       });
   });
 
