@@ -18,27 +18,36 @@ KEYWORDS = [
 ]
 
 
+PAGES_TO_FETCH = 4  # fetches 4 pages = ~40 results
+
+
 def fetch_keyword(keyword, week_date_str, db_path, api_key=None):
     key = api_key or os.environ.get('SCALESERP_API_KEY', '')
     if not key:
         raise ValueError('SCALESERP_API_KEY environment variable not set')
 
-    params = {
-        'api_key': key,
-        'q': keyword,
-        'num': 40,
-        'output': 'json',
-        'google_domain': 'google.com',
-        'gl': 'us',
-        'hl': 'en',
-    }
-    url = f'{SCALESERP_ENDPOINT}?{urllib.parse.urlencode(params)}'
+    # Paginate through multiple pages to collect enough results
+    all_results = []
+    for page in range(1, PAGES_TO_FETCH + 1):
+        params = {
+            'api_key': key,
+            'q': keyword,
+            'page': page,
+            'num': 10,
+            'output': 'json',
+            'google_domain': 'google.com',
+            'gl': 'us',
+            'hl': 'en',
+        }
+        url = f'{SCALESERP_ENDPOINT}?{urllib.parse.urlencode(params)}'
+        req = urllib.request.Request(url, headers={'User-Agent': 'SERP-Dashboard/1.0'})
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data = json.loads(resp.read().decode('utf-8'))
 
-    req = urllib.request.Request(url, headers={'User-Agent': 'SERP-Dashboard/1.0'})
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        data = json.loads(resp.read().decode('utf-8'))
-
-    organic = data.get('organic_results', [])
+        organic = data.get('organic_results', [])
+        if not organic:
+            break  # no more results
+        all_results.extend(organic)
 
     conn = sqlite3.connect(db_path)
     keyword_id = get_or_create_keyword(conn, keyword)
@@ -51,7 +60,7 @@ def fetch_keyword(keyword, week_date_str, db_path, api_key=None):
     )
 
     imported = 0
-    for i, result in enumerate(organic, start=1):
+    for i, result in enumerate(all_results, start=1):
         link    = result.get('link', '').strip()
         title   = result.get('title', '').strip()
         snippet = result.get('snippet', '').strip()
