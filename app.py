@@ -1,10 +1,47 @@
-from flask import Flask, render_template, request, jsonify, redirect, url_for
+from flask import Flask, render_template, request, jsonify, redirect, url_for, Response
 import sqlite3
 import os
 import json
+import functools
 from datetime import datetime
 
 app = Flask(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Basic Auth
+# ---------------------------------------------------------------------------
+
+def check_auth(password):
+    expected = os.environ.get('DASHBOARD_PASSWORD', '')
+    return expected and password == expected
+
+def require_auth():
+    return Response(
+        'Access denied', 401,
+        {'WWW-Authenticate': 'Basic realm="SERP Dashboard"'}
+    )
+
+def login_required(f):
+    @functools.wraps(f)
+    def decorated(*args, **kwargs):
+        if not os.environ.get('DASHBOARD_PASSWORD'):
+            return f(*args, **kwargs)  # no password set — open access
+        auth = request.authorization
+        if not auth or not check_auth(auth.password):
+            return require_auth()
+        return f(*args, **kwargs)
+    return decorated
+
+app.before_request_funcs.setdefault(None, [])
+
+@app.before_request
+def protect():
+    if not os.environ.get('DASHBOARD_PASSWORD'):
+        return  # no password configured, allow all
+    auth = request.authorization
+    if not auth or not check_auth(auth.password):
+        return require_auth()
 DB_PATH = os.environ.get(
     'DATABASE_PATH',
     os.path.join(os.path.dirname(os.path.abspath(__file__)), 'serp_dashboard.db')
