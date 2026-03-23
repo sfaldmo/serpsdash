@@ -613,6 +613,7 @@ def api_stats():
 
 @app.route('/api/analyze', methods=['POST'])
 def api_analyze():
+  try:
     data       = request.get_json(force=True)
     keyword_id = int(data.get('keyword_id', 0))
     week_id    = int(data.get('week_id', 0))
@@ -752,6 +753,9 @@ Keep it sharp, professional, and scannable. No fluff. Use plain bullet points (â
 
     analysis = result['content'][0]['text']
     return jsonify({'ok': True, 'analysis': analysis, 'keyword': keyword_name, 'week': week_date_str})
+  except Exception as e:
+    import traceback
+    return jsonify({'error': traceback.format_exc()}), 500
 
 
 # ---------------------------------------------------------------------------
