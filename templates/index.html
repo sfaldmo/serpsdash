@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Raleway:wght@400;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/style.css?v=14">
+  <link rel="stylesheet" href="/static/style.css?v=15">
 </head>
 <body>
 
@@ -94,33 +94,6 @@
     </table>
   </div>
 
-  <!-- Compare panel -->
-  <div id="compare-section" style="display:none">
-    <div id="compare-header">
-      <h3>Date Comparison</h3>
-      <div id="compare-controls">
-        <label>Week A <select id="compare-week-a"></select></label>
-        <span class="compare-vs">vs</span>
-        <label>Week B <select id="compare-week-b"></select></label>
-        <button id="compare-btn" class="btn-primary">Compare</button>
-        <button id="compare-close" class="btn-ghost">Close</button>
-      </div>
-    </div>
-    <div id="compare-table-wrapper">
-      <table id="compare-table" style="display:none">
-        <thead>
-          <tr>
-            <th class="col-sentiment">Tag</th>
-            <th class="col-url">URL / Title</th>
-            <th id="compare-head-a" class="col-pos">Week A</th>
-            <th id="compare-head-b" class="col-pos">Week B</th>
-            <th class="col-movement">Change</th>
-          </tr>
-        </thead>
-        <tbody id="compare-body"></tbody>
-      </table>
-    </div>
-  </div>
 
 
 </main>
@@ -150,6 +123,40 @@
   </div>
 </div>
 
+<!-- ===== COMPARE MODAL ===== -->
+<div id="compare-overlay" class="hidden">
+  <div id="compare-modal">
+    <div id="compare-modal-header">
+      <div id="compare-modal-title">
+        <h2>Compare Dates</h2>
+        <span id="compare-kw-label"></span>
+      </div>
+      <div id="compare-controls">
+        <label>Week A <select id="compare-week-a"></select></label>
+        <span class="compare-vs">vs</span>
+        <label>Week B <select id="compare-week-b"></select></label>
+        <button id="compare-btn" class="btn-primary">Compare</button>
+      </div>
+      <button id="compare-close" class="compare-close-btn">&times;</button>
+    </div>
+    <div id="compare-table-wrapper">
+      <div id="compare-empty">Select two weeks above and click Compare.</div>
+      <table id="compare-table" style="display:none">
+        <thead>
+          <tr>
+            <th class="col-sentiment">Tag</th>
+            <th class="col-url">URL / Title</th>
+            <th id="compare-head-a" class="col-pos">Week A</th>
+            <th id="compare-head-b" class="col-pos">Week B</th>
+            <th class="col-movement">Change</th>
+          </tr>
+        </thead>
+        <tbody id="compare-body"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
 <!-- ===== FETCH MODAL ===== -->
 <div id="fetch-modal-overlay" class="hidden">
   <div id="fetch-modal">
@@ -170,6 +177,6 @@
 </div>
 
 
-<script src="/static/app.js?v=14"></script>
+<script src="/static/app.js?v=15"></script>
 </body>
 </html>

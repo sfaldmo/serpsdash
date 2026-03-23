@@ -288,13 +288,13 @@ function fmtDate(dateStr) {
 // -----------------------------------------------------------------------
 function setupCompare() {
   const toggleBtn  = document.getElementById('compare-toggle-btn');
-  const section    = document.getElementById('compare-section');
+  const overlay    = document.getElementById('compare-overlay');
   const closeBtn   = document.getElementById('compare-close');
   const compareBtn = document.getElementById('compare-btn');
   const selectA    = document.getElementById('compare-week-a');
   const selectB    = document.getElementById('compare-week-b');
+  const kwLabel    = document.getElementById('compare-kw-label');
 
-  // Populate week selects from the main week-select options
   function populateWeekSelects() {
     const opts = [...document.getElementById('week-select').options];
     [selectA, selectB].forEach((sel, idx) => {
@@ -310,20 +310,26 @@ function setupCompare() {
     });
   }
 
+  function openModal() {
+    populateWeekSelects();
+    kwLabel.textContent = activeKeywordName || '';
+    document.getElementById('compare-empty').style.display = 'block';
+    document.getElementById('compare-table').style.display = 'none';
+    overlay.classList.remove('hidden');
+    toggleBtn.classList.add('active');
+  }
+
+  function closeModal() {
+    overlay.classList.add('hidden');
+    toggleBtn.classList.remove('active');
+  }
+
   toggleBtn.addEventListener('click', () => {
-    const open = section.style.display !== 'none';
-    section.style.display = open ? 'none' : 'block';
-    toggleBtn.classList.toggle('active', !open);
-    if (!open) {
-      populateWeekSelects();
-      document.getElementById('compare-table').style.display = 'none';
-    }
+    overlay.classList.contains('hidden') ? openModal() : closeModal();
   });
 
-  closeBtn.addEventListener('click', () => {
-    section.style.display = 'none';
-    toggleBtn.classList.remove('active');
-  });
+  closeBtn.addEventListener('click', closeModal);
+  overlay.addEventListener('click', e => { if (e.target === overlay) closeModal(); });
 
   compareBtn.addEventListener('click', () => {
     if (!activeKeywordId) return;
@@ -331,15 +337,23 @@ function setupCompare() {
     const weekB = selectB.value;
     if (weekA === weekB) { alert('Please select two different weeks.'); return; }
 
+    compareBtn.textContent = 'Loading…';
+    compareBtn.disabled = true;
     fetch(`/api/compare?keyword_id=${activeKeywordId}&week_a=${weekA}&week_b=${weekB}`)
       .then(r => r.json())
-      .then(renderCompare);
+      .then(data => {
+        renderCompare(data);
+        compareBtn.textContent = 'Compare';
+        compareBtn.disabled = false;
+      });
   });
 }
 
 function renderCompare(data) {
-  const table = document.getElementById('compare-table');
-  const tbody = document.getElementById('compare-body');
+  const table   = document.getElementById('compare-table');
+  const tbody   = document.getElementById('compare-body');
+  const empty   = document.getElementById('compare-empty');
+  empty.style.display = 'none';
 
   document.getElementById('compare-head-a').textContent = data.week_a;
   document.getElementById('compare-head-b').textContent = data.week_b;
