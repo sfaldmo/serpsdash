@@ -10,6 +10,8 @@
 let activeKeywordId   = null;
 let activeKeywordName = '';
 let activeWeekId      = null;
+let currentResults    = [];
+let activeFilter      = null;
 
 // -----------------------------------------------------------------------
 // Init
@@ -47,6 +49,23 @@ document.addEventListener('DOMContentLoaded', () => {
     window.location.href = `/api/export?week_id=${activeWeekId}`;
   });
 
+  // Filter buttons
+  document.querySelectorAll('.stat-filter-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const f = btn.dataset.filter;
+      if (activeFilter === f) {
+        // toggle off
+        activeFilter = null;
+        document.querySelectorAll('.stat-filter-btn').forEach(b => b.classList.remove('active'));
+      } else {
+        activeFilter = f;
+        document.querySelectorAll('.stat-filter-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+      }
+      renderTable(applyFilter(currentResults));
+    });
+  });
+
   // Auto-select first keyword
   if (firstKwBtn) firstKwBtn.click();
 
@@ -72,7 +91,11 @@ function loadResults() {
     fetch('/api/results?' + params).then(r => r.json()),
     fetch('/api/stats?'   + params).then(r => r.json()),
   ]).then(([results, stats]) => {
-    renderTable(results);
+    currentResults = results;
+    // Clear active filter when switching keywords/weeks
+    activeFilter = null;
+    document.querySelectorAll('.stat-filter-btn').forEach(b => b.classList.remove('active'));
+    renderTable(applyFilter(currentResults));
     renderStats(stats);
   });
 }
@@ -91,6 +114,20 @@ function renderStats(stats) {
 function setText(id, val) {
   const el = document.getElementById(id);
   if (el) el.textContent = val;
+}
+
+// -----------------------------------------------------------------------
+// Filter helper
+// -----------------------------------------------------------------------
+function applyFilter(results) {
+  if (!activeFilter) return results;
+  return results.filter(r => {
+    if (activeFilter === 'green')  return r.sentiment !== 'negative';
+    if (activeFilter === 'red')    return r.sentiment === 'negative';
+    if (activeFilter === 'new')    return r.movement === 'new';
+    if (activeFilter === 'owned')  return r.owned === true;
+    return true;
+  });
 }
 
 // -----------------------------------------------------------------------

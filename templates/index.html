@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Raleway:wght@400;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/style.css?v=11">
+  <link rel="stylesheet" href="/static/style.css?v=12">
 </head>
 <body>
 
@@ -57,18 +57,22 @@
     <div class="stat-card positive">
       <span class="stat-val" id="stat-positive">—</span>
       <span class="stat-label">Green (Positive / Neutral)</span>
+      <button class="stat-filter-btn" data-filter="green">Filter</button>
     </div>
     <div class="stat-card negative">
       <span class="stat-val" id="stat-negative">—</span>
       <span class="stat-label">Red (Negative/Competitor)</span>
+      <button class="stat-filter-btn" data-filter="red">Filter</button>
     </div>
     <div class="stat-card new">
       <span class="stat-val" id="stat-new">—</span>
       <span class="stat-label">New This Week</span>
+      <button class="stat-filter-btn" data-filter="new">Filter</button>
     </div>
     <div class="stat-card owned">
       <span class="stat-val" id="stat-owned">—</span>
       <span class="stat-label">Our Assets</span>
+      <button class="stat-filter-btn" data-filter="owned">Filter</button>
     </div>
   </div>
 
@@ -166,6 +170,6 @@
 </div>
 
 
-<script src="/static/app.js?v=11"></script>
+<script src="/static/app.js?v=12"></script>
 </body>
 </html>

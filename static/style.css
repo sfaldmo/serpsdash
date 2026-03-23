@@ -199,6 +199,28 @@ body { display: flex; }
 .stat-val   { font-size: 34px; font-weight: 700; }
 .stat-label { font-size: 13px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: .5px; }
 
+.stat-filter-btn {
+  margin-top: 6px;
+  padding: 4px 14px;
+  font-size: 12px;
+  font-weight: 700;
+  font-family: inherit;
+  text-transform: uppercase;
+  letter-spacing: .5px;
+  border-radius: 20px;
+  border: 1px solid var(--border);
+  background: var(--gray-light);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all .15s;
+}
+.stat-filter-btn:hover { background: var(--border); color: var(--text); }
+.stat-filter-btn.active {
+  background: var(--sidebar-bg);
+  color: #fff;
+  border-color: var(--sidebar-bg);
+}
+
 .stat-card.positive .stat-val { color: var(--green); }
 .stat-card.negative .stat-val { color: var(--red); }
 .stat-card.new      .stat-val { color: var(--blue); }
