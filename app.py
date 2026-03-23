@@ -638,7 +638,7 @@ def _movement_text(movement, last_seen_pos=None, last_seen_date=None):
 
 @app.route('/api/export')
 def api_export():
-    import io, re
+    import io
     import openpyxl
     from openpyxl.styles import Font, PatternFill, Alignment
     from flask import send_file
@@ -667,25 +667,36 @@ def api_export():
         END
     ''').fetchall()
 
-    wb = openpyxl.Workbook()
-    wb.remove(wb.active)  # remove default sheet
+    # Load all url sentiment tags up front
+    sentiment_map = {
+        r['url']: r['sentiment']
+        for r in conn.execute('SELECT url, sentiment FROM url_tags').fetchall()
+    }
 
-    header_font    = Font(bold=True)
-    page_font      = Font(bold=True, color='FFFFFF')
-    page_fill      = PatternFill('solid', fgColor='1A1F2E')
+    wb = openpyxl.Workbook()
+    wb.remove(wb.active)
+
+    header_font = Font(bold=True, size=11)
+    header_align = Alignment(horizontal='center')
+    page_font    = Font(bold=True, size=11)
+    page_align   = Alignment(horizontal='center')
+    page_fill    = PatternFill('solid', fgColor='D9D9D9')   # light gray, matches original
+    green_fill   = PatternFill('solid', fgColor='00B050')
+    red_fill     = PatternFill('solid', fgColor='FF0000')
 
     for kw in keywords:
         sheet_name = EXPORT_SHEET_NAMES.get(kw['name'], kw['name'])
         ws = wb.create_sheet(title=sheet_name)
 
+        ws.column_dimensions['A'].width = 15.66
+        ws.column_dimensions['B'].width = 92.0
+        ws.column_dimensions['C'].width = 17.83
+
         # Header row
         ws.append(['Position This Week', 'Current URL', 'Movement'])
         for cell in ws[1]:
-            cell.font = header_font
-
-        ws.column_dimensions['A'].width = 22
-        ws.column_dimensions['B'].width = 70
-        ws.column_dimensions['C'].width = 22
+            cell.font      = header_font
+            cell.alignment = header_align
 
         # Fetch results
         rows = conn.execute('''
@@ -733,14 +744,14 @@ def api_export():
             page = (r['position'] - 1) // 10 + 1
             if page != current_page:
                 current_page = page
-                page_row = ws.max_row + 1
+                page_row_num = ws.max_row + 1
                 ws.append([None, f'Page {page}', None])
-                for cell in ws[page_row]:
-                    cell.font      = page_font
+                for cell in ws[page_row_num]:
                     cell.fill      = page_fill
-                    cell.alignment = Alignment(horizontal='left')
+                    cell.alignment = page_align
+                ws[f'B{page_row_num}'].font = page_font
 
-            url = r['url']
+            url    = r['url']
             is_dup = url in seen_urls
             seen_urls.add(url)
 
@@ -762,8 +773,15 @@ def api_export():
                 else:           mv = f'down_{abs(diff)}'
                 ls_pos, ls_date = None, None
 
-            mv_text = _movement_text(mv, ls_pos, ls_date)
+            mv_text   = _movement_text(mv, ls_pos, ls_date)
+            row_num   = ws.max_row + 1
             ws.append([r['position'], url, mv_text])
+
+            # Color URL and Movement cells by sentiment
+            sentiment = sentiment_map.get(url, 'neutral')
+            fill = red_fill if sentiment == 'negative' else green_fill
+            ws[f'B{row_num}'].fill = fill
+            ws[f'C{row_num}'].fill = fill
 
     conn.close()
 
