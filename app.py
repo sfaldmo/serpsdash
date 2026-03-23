@@ -451,6 +451,28 @@ def admin_restore_db():
     return '<html><body style="font-family:sans-serif;max-width:500px;margin:60px auto;padding:20px"><h2>Done!</h2><p>Database restored. <a href="/">Go to dashboard</a></p></body></html>'
 
 
+@app.route('/admin/restore-db', methods=['GET', 'POST'])
+def admin_restore_db():
+    if request.method == 'GET':
+        return '''
+        <html><body style="font-family:sans-serif;max-width:500px;margin:60px auto;padding:20px">
+        <h2>Restore Database</h2>
+        <form method="POST" enctype="multipart/form-data">
+          <input type="file" name="dbfile" accept=".db" required><br><br>
+          <button type="submit" style="padding:10px 20px;background:#1565c0;color:#fff;border:none;border-radius:6px;cursor:pointer">Upload & Restore</button>
+        </form>
+        </body></html>
+        '''
+    f = request.files.get('dbfile')
+    if not f:
+        return 'No file provided', 400
+    import shutil, tempfile
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.db')
+    f.save(tmp.name)
+    shutil.move(tmp.name, DB_PATH)
+    return '<html><body style="font-family:sans-serif;max-width:500px;margin:60px auto;padding:20px"><h2>Done!</h2><p>Database restored. <a href="/">Go to dashboard</a></p></body></html>'
+
+
 @app.route('/api/fetch', methods=['POST'])
 def api_fetch():
     data      = request.get_json(force=True)
