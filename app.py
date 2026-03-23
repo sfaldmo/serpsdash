@@ -71,7 +71,12 @@ def init_db():
 
 
 # Ensure the directory for the DB file exists (needed when using a Railway volume path like /data)
-os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+_db_dir = os.path.dirname(DB_PATH)
+if _db_dir:
+    try:
+        os.makedirs(_db_dir, exist_ok=True)
+    except OSError:
+        pass  # directory may already exist or be read-only; sqlite will surface the real error
 
 # Run at import time so gunicorn workers always have a valid schema
 init_db()
