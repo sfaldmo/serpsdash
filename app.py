@@ -123,6 +123,11 @@ init_db()
 # Routes
 # ---------------------------------------------------------------------------
 
+@app.route('/robots.txt')
+def robots():
+    return Response('User-agent: *\nDisallow: /\n', mimetype='text/plain')
+
+
 @app.route('/')
 def index():
     conn = get_db()
