@@ -70,6 +70,10 @@ def init_db():
     conn.close()
 
 
+# Run at import time so gunicorn workers always have a valid schema
+init_db()
+
+
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
