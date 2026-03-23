@@ -56,6 +56,16 @@ def get_db():
     return conn
 
 
+def normalize_url(url):
+    """Strip Google tracking params (srsltid, etc.) for comparison."""
+    if not url:
+        return url
+    import re as _re
+    url = _re.sub(r'[?&]srsltid=[^&]*', '', url)
+    url = _re.sub(r'[?&]srs=[^&]*',     '', url)
+    return url.rstrip('?&')
+
+
 def init_db():
     conn = get_db()
     conn.executescript('''
@@ -179,7 +189,7 @@ def api_results():
             SELECT url, position FROM serp_results
             WHERE keyword_id = ? AND week_id = ?
         ''', (keyword_id, prev['id'])).fetchall():
-            prev_pos[r['url']] = r['position']
+            prev_pos[normalize_url(r['url'])] = r['position']
 
     # For URLs absent from the previous week, look up their most recent
     # historical position across ALL prior weeks (not just the last one).
@@ -187,7 +197,7 @@ def api_results():
         'SELECT week_date FROM weeks WHERE id=?', (week_id,)
     ).fetchone()['week_date']
 
-    not_in_prev = list({r['url'] for r in rows if r['url'] not in prev_pos})
+    not_in_prev = list({r['url'] for r in rows if normalize_url(r['url']) not in prev_pos})
     last_seen = {}
     if not_in_prev:
         placeholders = ','.join(['?'] * len(not_in_prev))
@@ -201,7 +211,7 @@ def api_results():
                   AND  w.week_date < ?
             ) WHERE rn = 1
         ''', [keyword_id] + not_in_prev + [str(curr_week_date)]).fetchall():
-            last_seen[hr['url']] = {'pos': hr['position'], 'date': str(hr['week_date'])}
+            last_seen[normalize_url(hr['url'])] = {'pos': hr['position'], 'date': str(hr['week_date'])}
 
     conn.close()
 
@@ -209,8 +219,9 @@ def api_results():
     out = []
     for r in rows:
         url      = r['url']
-        is_dup   = url in seen_urls
-        seen_urls.add(url)
+        norm_url = normalize_url(url)
+        is_dup   = norm_url in seen_urls
+        seen_urls.add(norm_url)
 
         last_seen_pos  = None
         last_seen_date = None
@@ -218,17 +229,17 @@ def api_results():
         if is_dup:
             movement = 'duplicate'
             mv_val   = 0
-        elif url not in prev_pos:
-            if url in last_seen:
+        elif norm_url not in prev_pos:
+            if norm_url in last_seen:
                 movement       = 'returned'
                 mv_val         = 0
-                last_seen_pos  = last_seen[url]['pos']
-                last_seen_date = last_seen[url]['date']
+                last_seen_pos  = last_seen[norm_url]['pos']
+                last_seen_date = last_seen[norm_url]['date']
             else:
                 movement = 'new'
                 mv_val   = 0
         else:
-            diff = prev_pos[url] - r['position']   # positive = moved up
+            diff = prev_pos[norm_url] - r['position']   # positive = moved up
             if diff == 0:
                 movement = 'no_change'
             elif diff > 0:
@@ -730,10 +741,10 @@ def api_export():
                 'SELECT url, position FROM serp_results WHERE keyword_id=? AND week_id=?',
                 (kw['id'], prev['id'])
             ).fetchall():
-                prev_pos[r['url']] = r['position']
+                prev_pos[normalize_url(r['url'])] = r['position']
 
         curr_urls = [r['url'] for r in rows]
-        not_in_prev = [u for u in curr_urls if u not in prev_pos]
+        not_in_prev = [u for u in curr_urls if normalize_url(u) not in prev_pos]
         last_seen = {}
         if not_in_prev:
             placeholders = ','.join(['?'] * len(not_in_prev))
@@ -747,7 +758,7 @@ def api_export():
                       AND  w.week_date < ?
                 ) WHERE rn=1
             ''', [kw['id']] + not_in_prev + [week_date_str]).fetchall():
-                last_seen[hr['url']] = {'pos': hr['position'], 'date': str(hr['week_date'])}
+                last_seen[normalize_url(hr['url'])] = {'pos': hr['position'], 'date': str(hr['week_date'])}
 
         seen_urls = set()
         current_page = 0
@@ -766,23 +777,24 @@ def api_export():
                     cell.border    = thin_border
                 ws[f'B{page_row_num}'].font = page_font
 
-            url    = r['url']
-            is_dup = url in seen_urls
-            seen_urls.add(url)
+            url      = r['url']
+            norm_url = normalize_url(url)
+            is_dup   = norm_url in seen_urls
+            seen_urls.add(norm_url)
 
             if is_dup:
                 mv = 'duplicate'
                 ls_pos, ls_date = None, None
-            elif url not in prev_pos:
-                if url in last_seen:
+            elif norm_url not in prev_pos:
+                if norm_url in last_seen:
                     mv      = 'returned'
-                    ls_pos  = last_seen[url]['pos']
-                    ls_date = last_seen[url]['date']
+                    ls_pos  = last_seen[norm_url]['pos']
+                    ls_date = last_seen[norm_url]['date']
                 else:
                     mv = 'new'
                     ls_pos, ls_date = None, None
             else:
-                diff = prev_pos[url] - r['position']
+                diff = prev_pos[norm_url] - r['position']
                 if diff == 0:   mv = 'no_change'
                 elif diff > 0:  mv = f'up_{diff}'
                 else:           mv = f'down_{abs(diff)}'

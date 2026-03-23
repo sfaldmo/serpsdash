@@ -87,11 +87,19 @@ def get_or_create_week(conn, week_date):
     cur = conn.execute('INSERT INTO weeks (week_date) VALUES (?)', (ds,))
     return cur.lastrowid
 
+def normalize_url(url):
+    """Strip Google tracking params (srsltid, etc.) so the same page isn't treated as new."""
+    if not url:
+        return url
+    url = re.sub(r'[?&]srsltid=[^&]*', '', url)
+    url = re.sub(r'[?&]srs=[^&]*',     '', url)
+    return url.rstrip('?&')
+
 def insert_result(conn, keyword_id, week_id, position, url, title, snippet):
     try:
         conn.execute(
             'INSERT OR IGNORE INTO serp_results (keyword_id, week_id, position, url, title, snippet) VALUES (?,?,?,?,?,?)',
-            (keyword_id, week_id, position, url, title or '', snippet or '')
+            (keyword_id, week_id, position, normalize_url(url), title or '', snippet or '')
         )
     except Exception:
         pass
