@@ -37,7 +37,6 @@ document.addEventListener('DOMContentLoaded', () => {
       document.getElementById('kw-title').textContent = activeKeywordName;
       document.getElementById('compare-toggle-btn').style.display = 'inline-flex';
       document.getElementById('export-btn').style.display = 'inline-flex';
-      document.getElementById('analyze-btn').style.display = 'inline-flex';
       loadResults();
     });
   });
@@ -47,9 +46,6 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!activeWeekId) return;
     window.location.href = `/api/export?week_id=${activeWeekId}`;
   });
-
-  // Analysis modal
-  setupAnalysisModal();
 
   // Auto-select first keyword
   if (firstKwBtn) firstKwBtn.click();
@@ -541,63 +537,6 @@ function setupFetchModal() {
   }
 }
 
-
-// -----------------------------------------------------------------------
-// Quick Analysis modal
-// -----------------------------------------------------------------------
-function setupAnalysisModal() {
-  const overlay   = document.getElementById('analysis-modal-overlay');
-  const openBtn   = document.getElementById('analyze-btn');
-  const closeBtn  = document.getElementById('analysis-modal-close');
-  const content   = document.getElementById('analysis-content');
-  const meta      = document.getElementById('analysis-meta');
-  const copyBtn   = document.getElementById('analysis-copy-btn');
-
-  openBtn.addEventListener('click', () => {
-    if (!activeKeywordId || !activeWeekId) return;
-    overlay.classList.remove('hidden');
-    meta.textContent = '';
-    content.innerHTML = '<div class="analysis-loading">Analyzing&hellip;</div>';
-    copyBtn.style.display = 'none';
-
-    fetch('/api/analyze', {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ keyword_id: activeKeywordId, week_id: activeWeekId }),
-    })
-      .then(r => {
-        if (!r.ok) return r.text().then(t => { throw new Error(`Server error ${r.status}: ${t.slice(0, 200)}`); });
-        return r.json();
-      })
-      .then(data => {
-        if (data.ok) {
-          meta.textContent = `${data.keyword} — ${data.week}`;
-          content.innerHTML = data.analysis
-            .split('\n')
-            .filter(l => l.trim())
-            .map(l => `<p>${escHtml(l)}</p>`)
-            .join('');
-          copyBtn.style.display = 'block';
-          copyBtn.dataset.text  = data.analysis;
-        } else {
-          content.innerHTML = `<p class="analysis-error">${escHtml(data.error || 'Analysis failed.')}</p>`;
-        }
-      })
-      .catch(err => {
-        content.innerHTML = `<p class="analysis-error">${escHtml(err.message || 'Request failed.')}</p>`;
-      });
-  });
-
-  closeBtn.addEventListener('click',  () => overlay.classList.add('hidden'));
-  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.classList.add('hidden'); });
-
-  copyBtn.addEventListener('click', () => {
-    navigator.clipboard.writeText(copyBtn.dataset.text || '').then(() => {
-      copyBtn.textContent = 'Copied!';
-      setTimeout(() => { copyBtn.textContent = 'Copy to Clipboard'; }, 2000);
-    });
-  });
-}
 
 // -----------------------------------------------------------------------
 // Helpers
