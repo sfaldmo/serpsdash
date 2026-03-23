@@ -724,6 +724,7 @@ Write a concise quick analysis (5-8 bullet points max) that I can share with my 
 Keep it sharp, professional, and scannable. No fluff. Use plain bullet points (â€¢)."""
 
     import urllib.request as _req
+    import urllib.error as _uerr
     payload = json.dumps({
         'model':      'claude-sonnet-4-6',
         'max_tokens': 600,
@@ -740,8 +741,14 @@ Keep it sharp, professional, and scannable. No fluff. Use plain bullet points (â
         },
         method='POST',
     )
-    with _req.urlopen(req, timeout=30) as resp:
-        result = json.loads(resp.read().decode('utf-8'))
+    try:
+        with _req.urlopen(req, timeout=30) as resp:
+            result = json.loads(resp.read().decode('utf-8'))
+    except _uerr.HTTPError as e:
+        err_body = e.read().decode('utf-8')
+        return jsonify({'error': f'Anthropic API error {e.code}: {err_body}'}), 500
+    except Exception as e:
+        return jsonify({'error': f'Request failed: {str(e)}'}), 500
 
     analysis = result['content'][0]['text']
     return jsonify({'ok': True, 'analysis': analysis, 'keyword': keyword_name, 'week': week_date_str})
