@@ -36,8 +36,15 @@ document.addEventListener('DOMContentLoaded', () => {
       activeKeywordName = btn.dataset.name;
       document.getElementById('kw-title').textContent = activeKeywordName;
       document.getElementById('compare-toggle-btn').style.display = 'inline-flex';
+      document.getElementById('export-btn').style.display = 'inline-flex';
       loadResults();
     });
+  });
+
+  // Export button
+  document.getElementById('export-btn').addEventListener('click', () => {
+    if (!activeWeekId) return;
+    window.location.href = `/api/export?week_id=${activeWeekId}`;
   });
 
   // Auto-select first keyword

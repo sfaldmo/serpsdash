@@ -610,6 +610,179 @@ def api_stats():
 
 
 # ---------------------------------------------------------------------------
+# Excel Export
+# ---------------------------------------------------------------------------
+
+# Maps DB keyword name → Excel sheet name (matching original format)
+EXPORT_SHEET_NAMES = {
+    'Melaleuca':            'Melaleuca',
+    'Melaleuca.com':        'Melaleuca.com',
+    'Frank VanderSloot':    'Frank VanderSloot',
+    'Melaleuca Products':   'Melaleuca Products',
+    'Melaleuca Reviews':    'Melaleuca Reviews',
+    'The Wellness Company': 'The Wellness Company (TWC)',
+    'Riverbend Ranch':      'Riverbend Ranch (Google)',
+}
+
+def _movement_text(movement, last_seen_pos=None, last_seen_date=None):
+    if movement == 'no_change':  return 'no change'
+    if movement == 'new':        return 'new'
+    if movement == 'duplicate':  return 'duplicate'
+    if movement == 'returned' and last_seen_pos and last_seen_date:
+        d = datetime.strptime(last_seen_date, '%Y-%m-%d')
+        return f'{last_seen_pos} on {d.strftime("%-m/%-d/%y")}'
+    m = __import__('re').match(r'^(up|down)_(\d+)$', movement or '')
+    if m:
+        return f'{m.group(1)} {m.group(2)}'
+    return movement or ''
+
+@app.route('/api/export')
+def api_export():
+    import io, re
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment
+    from flask import send_file
+
+    week_id = request.args.get('week_id', type=int)
+    if not week_id:
+        return jsonify({'error': 'week_id required'}), 400
+
+    conn = get_db()
+    week_row = conn.execute('SELECT week_date FROM weeks WHERE id=?', (week_id,)).fetchone()
+    if not week_row:
+        conn.close()
+        return jsonify({'error': 'week not found'}), 404
+    week_date_str = str(week_row['week_date'])
+
+    keywords = conn.execute('''
+        SELECT * FROM keywords ORDER BY CASE name
+            WHEN 'Melaleuca' THEN 1
+            WHEN 'Melaleuca.com' THEN 2
+            WHEN 'Frank VanderSloot' THEN 3
+            WHEN 'Melaleuca Products' THEN 4
+            WHEN 'Melaleuca Reviews' THEN 5
+            WHEN 'The Wellness Company' THEN 6
+            WHEN 'Riverbend Ranch' THEN 7
+            ELSE 8
+        END
+    ''').fetchall()
+
+    wb = openpyxl.Workbook()
+    wb.remove(wb.active)  # remove default sheet
+
+    header_font    = Font(bold=True)
+    page_font      = Font(bold=True, color='FFFFFF')
+    page_fill      = PatternFill('solid', fgColor='1A1F2E')
+
+    for kw in keywords:
+        sheet_name = EXPORT_SHEET_NAMES.get(kw['name'], kw['name'])
+        ws = wb.create_sheet(title=sheet_name)
+
+        # Header row
+        ws.append(['Position This Week', 'Current URL', 'Movement'])
+        for cell in ws[1]:
+            cell.font = header_font
+
+        ws.column_dimensions['A'].width = 22
+        ws.column_dimensions['B'].width = 70
+        ws.column_dimensions['C'].width = 22
+
+        # Fetch results
+        rows = conn.execute('''
+            SELECT sr.position, sr.url
+            FROM serp_results sr
+            WHERE sr.keyword_id=? AND sr.week_id=?
+            ORDER BY sr.position
+        ''', (kw['id'], week_id)).fetchall()
+
+        # Previous week
+        prev = conn.execute('''
+            SELECT id FROM weeks
+            WHERE week_date < ? ORDER BY week_date DESC LIMIT 1
+        ''', (week_date_str,)).fetchone()
+
+        prev_pos = {}
+        if prev:
+            for r in conn.execute(
+                'SELECT url, position FROM serp_results WHERE keyword_id=? AND week_id=?',
+                (kw['id'], prev['id'])
+            ).fetchall():
+                prev_pos[r['url']] = r['position']
+
+        curr_urls = [r['url'] for r in rows]
+        not_in_prev = [u for u in curr_urls if u not in prev_pos]
+        last_seen = {}
+        if not_in_prev:
+            placeholders = ','.join(['?'] * len(not_in_prev))
+            for hr in conn.execute(f'''
+                SELECT url, position, week_date FROM (
+                    SELECT sr.url, sr.position, w.week_date,
+                           ROW_NUMBER() OVER (PARTITION BY sr.url ORDER BY w.week_date DESC) AS rn
+                    FROM   serp_results sr
+                    JOIN   weeks w ON sr.week_id = w.id
+                    WHERE  sr.keyword_id=? AND sr.url IN ({placeholders})
+                      AND  w.week_date < ?
+                ) WHERE rn=1
+            ''', [kw['id']] + not_in_prev + [week_date_str]).fetchall():
+                last_seen[hr['url']] = {'pos': hr['position'], 'date': str(hr['week_date'])}
+
+        seen_urls = set()
+        current_page = 0
+
+        for r in rows:
+            page = (r['position'] - 1) // 10 + 1
+            if page != current_page:
+                current_page = page
+                page_row = ws.max_row + 1
+                ws.append([None, f'Page {page}', None])
+                for cell in ws[page_row]:
+                    cell.font      = page_font
+                    cell.fill      = page_fill
+                    cell.alignment = Alignment(horizontal='left')
+
+            url = r['url']
+            is_dup = url in seen_urls
+            seen_urls.add(url)
+
+            if is_dup:
+                mv = 'duplicate'
+                ls_pos, ls_date = None, None
+            elif url not in prev_pos:
+                if url in last_seen:
+                    mv      = 'returned'
+                    ls_pos  = last_seen[url]['pos']
+                    ls_date = last_seen[url]['date']
+                else:
+                    mv = 'new'
+                    ls_pos, ls_date = None, None
+            else:
+                diff = prev_pos[url] - r['position']
+                if diff == 0:   mv = 'no_change'
+                elif diff > 0:  mv = f'up_{diff}'
+                else:           mv = f'down_{abs(diff)}'
+                ls_pos, ls_date = None, None
+
+            mv_text = _movement_text(mv, ls_pos, ls_date)
+            ws.append([r['position'], url, mv_text])
+
+    conn.close()
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    d = datetime.strptime(week_date_str, '%Y-%m-%d')
+    filename = f'SERP_Report_{d.strftime("%-m-%-d-%y")}.xlsx'
+
+    return send_file(
+        buf,
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        as_attachment=True,
+        download_name=filename,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Startup
 # ---------------------------------------------------------------------------
 
