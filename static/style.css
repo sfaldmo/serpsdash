@@ -298,6 +298,7 @@ tr.row-negative:hover td { background: #ffcdd2; }
   margin-bottom: 3px;
 }
 .url-link { color: #1565c0; }
+.url-link-primary.url-owned { color: #f57f17; }
 .url-link-primary {
   font-size: 17px;
   font-weight: 700;

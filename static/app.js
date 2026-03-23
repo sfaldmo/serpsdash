@@ -170,7 +170,7 @@ function renderTable(results) {
       <td class="col-movement">${renderMovement(r)}</td>
       <td class="col-url">
         <span class="url-title">
-          <a class="url-link url-link-primary" href="${escHtml(r.url)}" target="_blank" rel="noopener">${escHtml(r.url)}</a>
+          <a class="url-link url-link-primary${r.owned ? ' url-owned' : ''}" href="${escHtml(r.url)}" target="_blank" rel="noopener">${escHtml(r.url)}</a>
           ${renderOwnedBtn(r.url, r.owned)}
         </span>
         <span class="url-subtitle">${escHtml(r.title || '(no title)')}</span>
@@ -205,6 +205,10 @@ function toggleOwned(btn) {
   btn.classList.toggle('is-owned', next);
   btn.innerHTML = next ? '&#9733;' : '&#9734;';
   btn.title     = next ? 'Our Asset — click to remove' : 'Mark as Our Asset';
+
+  // Color the URL link to match the star when owned
+  const link = btn.closest('.url-title')?.querySelector('.url-link-primary');
+  if (link) link.classList.toggle('url-owned', next);
 
   // Update the "Our Assets" stat card immediately
   const statEl = document.getElementById('stat-owned');
