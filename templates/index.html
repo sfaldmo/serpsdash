@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SERP Dashboard</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<!-- ===== SIDEBAR ===== -->
+<aside id="sidebar">
+  <div class="sidebar-header">
+    <div class="logo-mark">SERP</div>
+    <div class="logo-sub">Dashboard</div>
+  </div>
+  <nav id="keyword-nav">
+    {% for kw in keywords %}
+    <button class="kw-btn" data-id="{{ kw.id }}" data-name="{{ kw.name }}">
+      {{ kw.name }}
+    </button>
+    {% endfor %}
+  </nav>
+  <div class="sidebar-footer">
+    <button id="fetch-btn" class="btn-fetch">&#8635; Fetch Live Data</button>
+    <button id="upload-btn" class="btn-upload">&#8679; Upload CSV</button>
+  </div>
+</aside>
+
+<!-- ===== MAIN ===== -->
+<main id="main">
+
+  <!-- Top bar -->
+  <header id="topbar">
+    <div id="kw-title">Select a keyword</div>
+    <div id="topbar-right">
+      <label for="week-select">Week:</label>
+      <select id="week-select">
+        {% for w in weeks %}
+        <option value="{{ w.id }}">{{ w.week_date }}</option>
+        {% endfor %}
+      </select>
+      <button id="compare-toggle-btn" class="btn-ghost" style="display:none">&#9654; Compare Dates</button>
+    </div>
+  </header>
+
+  <!-- Stats -->
+  <div id="stats-row">
+    <div class="stat-card">
+      <span class="stat-val" id="stat-total">—</span>
+      <span class="stat-label">Total Results</span>
+    </div>
+    <div class="stat-card positive">
+      <span class="stat-val" id="stat-positive">—</span>
+      <span class="stat-label">Green (Positive / Neutral)</span>
+    </div>
+    <div class="stat-card negative">
+      <span class="stat-val" id="stat-negative">—</span>
+      <span class="stat-label">Red (Negative)</span>
+    </div>
+    <div class="stat-card new">
+      <span class="stat-val" id="stat-new">—</span>
+      <span class="stat-label">New This Week</span>
+    </div>
+    <div class="stat-card owned">
+      <span class="stat-val" id="stat-owned">—</span>
+      <span class="stat-label">Our Assets</span>
+    </div>
+  </div>
+
+  <!-- Results table -->
+  <div id="table-wrapper">
+    <div id="empty-state">
+      <p>Select a keyword from the sidebar to get started.</p>
+    </div>
+    <table id="results-table" style="display:none">
+      <thead>
+        <tr>
+          <th class="col-pos">Position</th>
+          <th class="col-sentiment">Tag</th>
+          <th class="col-movement">Movement</th>
+          <th class="col-url">Website</th>
+        </tr>
+      </thead>
+      <tbody id="results-body"></tbody>
+    </table>
+  </div>
+
+  <!-- Compare panel -->
+  <div id="compare-section" style="display:none">
+    <div id="compare-header">
+      <h3>Date Comparison</h3>
+      <div id="compare-controls">
+        <label>Week A <select id="compare-week-a"></select></label>
+        <span class="compare-vs">vs</span>
+        <label>Week B <select id="compare-week-b"></select></label>
+        <button id="compare-btn" class="btn-primary">Compare</button>
+        <button id="compare-close" class="btn-ghost">Close</button>
+      </div>
+    </div>
+    <div id="compare-table-wrapper">
+      <table id="compare-table" style="display:none">
+        <thead>
+          <tr>
+            <th class="col-sentiment">Tag</th>
+            <th class="col-url">URL / Title</th>
+            <th id="compare-head-a" class="col-pos">Week A</th>
+            <th id="compare-head-b" class="col-pos">Week B</th>
+            <th class="col-movement">Change</th>
+          </tr>
+        </thead>
+        <tbody id="compare-body"></tbody>
+      </table>
+    </div>
+  </div>
+
+
+</main>
+
+<!-- ===== UPLOAD MODAL ===== -->
+<div id="modal-overlay" class="hidden">
+  <div id="modal">
+    <div id="modal-header">
+      <h2>Upload New Week</h2>
+      <button id="modal-close">&times;</button>
+    </div>
+    <div id="modal-body">
+      <p>Select the week date and upload all 7 CSV files exported from ScaleSerp via Postman.</p>
+      <label>Week Date
+        <input type="date" id="upload-date">
+      </label>
+      <label>CSV Files (select all at once)
+        <div id="drop-zone">
+          <span id="drop-label">Drag & drop CSVs here, or click to browse</span>
+          <input type="file" id="file-input" multiple accept=".csv" style="display:none">
+        </div>
+      </label>
+      <ul id="file-list"></ul>
+      <div id="upload-status"></div>
+      <button id="upload-submit" class="btn-primary">Import Week</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== FETCH MODAL ===== -->
+<div id="fetch-modal-overlay" class="hidden">
+  <div id="fetch-modal">
+    <div id="modal-header">
+      <h2>Fetch Live SERP Data</h2>
+      <button id="fetch-modal-close">&times;</button>
+    </div>
+    <div id="modal-body">
+      <p>Pulls fresh Google results for all 7 keywords via ScaleSERP API.</p>
+      <label>Week Date
+        <input type="date" id="fetch-date">
+      </label>
+      <div id="fetch-log"></div>
+      <div id="fetch-status"></div>
+      <button id="fetch-submit" class="btn-primary">Fetch Now</button>
+    </div>
+  </div>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
