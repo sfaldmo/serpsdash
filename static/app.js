@@ -170,7 +170,7 @@ function renderTable(results) {
       <td class="col-movement">${renderMovement(r)}</td>
       <td class="col-url">
         <span class="url-title">
-          <a class="url-link url-link-primary" href="${escHtml(r.url)}" target="_blank" rel="noopener">${escHtml(truncate(r.url, 60))}</a>
+          <a class="url-link url-link-primary" href="${escHtml(r.url)}" target="_blank" rel="noopener">${escHtml(r.url)}</a>
           ${renderOwnedBtn(r.url, r.owned)}
         </span>
         <span class="url-subtitle">${escHtml(r.title || '(no title)')}</span>
@@ -370,7 +370,7 @@ function renderCompare(data) {
       <td class="col-sentiment">${renderSentimentBtn(r.url, r.sentiment)}</td>
       <td class="col-url">
         <span class="url-title">
-          <a class="url-link url-link-primary" href="${escHtml(r.url)}" target="_blank" rel="noopener">${escHtml(truncate(r.url, 65))}</a>
+          <a class="url-link url-link-primary" href="${escHtml(r.url)}" target="_blank" rel="noopener">${escHtml(r.url)}</a>
           ${renderOwnedBtn(r.url, r.owned)}
         </span>
         <span class="url-subtitle">${escHtml(r.title || '(no title)')}</span>

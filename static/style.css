@@ -286,7 +286,7 @@ tr.row-negative:hover td { background: #ffcdd2; }
 .col-pos       { width: 52px; text-align: center; font-weight: 700; font-size: 18px; }
 .col-sentiment { width: 80px; text-align: center; }
 .col-movement  { width: 100px; text-align: center; }
-.col-url       { min-width: 260px; max-width: 420px; }
+.col-url       { min-width: 260px; }
 .col-snippet   { color: var(--text-muted); font-size: 14px; line-height: 1.5; }
 
 /* URL cell */
