@@ -164,6 +164,12 @@ def import_csv_file(db_path, filepath, keyword_name, week_date_str):
     keyword_id = get_or_create_keyword(conn, keyword_name)
     week_id = get_or_create_week(conn, week_date_str)
 
+    # Replace any existing data for this keyword+week so re-uploads don't duplicate
+    conn.execute(
+        'DELETE FROM serp_results WHERE keyword_id=? AND week_id=?',
+        (keyword_id, week_id)
+    )
+
     imported = 0
     abs_position = 0
     prev_pos = 999
