@@ -638,7 +638,7 @@ def _movement_text(movement, last_seen_pos=None, last_seen_date=None):
 def api_export():
     import io
     import openpyxl
-    from openpyxl.styles import Font, PatternFill, Alignment
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
     from flask import send_file
 
     week_id = request.args.get('week_id', type=int)
@@ -665,22 +665,35 @@ def api_export():
         END
     ''').fetchall()
 
-    # Load all url sentiment tags up front
-    sentiment_map = {
-        r['url']: r['sentiment']
-        for r in conn.execute('SELECT url, sentiment FROM url_tags').fetchall()
+    # Load all url tags (sentiment + owned) up front
+    tag_map = {
+        r['url']: {'sentiment': r['sentiment'], 'owned': bool(r['owned'])}
+        for r in conn.execute('SELECT url, sentiment, owned FROM url_tags').fetchall()
     }
 
     wb = openpyxl.Workbook()
     wb.remove(wb.active)
 
-    header_font = Font(bold=True, size=11)
+    thin       = Side(style='thin')
+    thin_border = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+    header_font  = Font(bold=True, size=11)
     header_align = Alignment(horizontal='center')
     page_font    = Font(bold=True, size=11)
     page_align   = Alignment(horizontal='center')
-    page_fill    = PatternFill('solid', fgColor='D9D9D9')   # light gray, matches original
+    page_fill    = PatternFill('solid', fgColor='D9D9D9')
     green_fill   = PatternFill('solid', fgColor='00B050')
     red_fill     = PatternFill('solid', fgColor='FF0000')
+    yellow_font  = Font(size=11, color='FFFF00')
+    black_font   = Font(size=11, color='000000')
+
+    def needs_yellow_movement(mv):
+        """Yellow font on movement cell for: new, duplicate, returned, or abs value > 10."""
+        if mv in ('new', 'duplicate', 'returned'):
+            return True
+        import re as _re
+        m = _re.match(r'^(up|down)_(\d+)$', mv or '')
+        return bool(m and int(m.group(2)) > 10)
 
     for kw in keywords:
         sheet_name = EXPORT_SHEET_NAMES.get(kw['name'], kw['name'])
@@ -695,6 +708,7 @@ def api_export():
         for cell in ws[1]:
             cell.font      = header_font
             cell.alignment = header_align
+            cell.border    = thin_border
 
         # Fetch results
         rows = conn.execute('''
@@ -747,6 +761,7 @@ def api_export():
                 for cell in ws[page_row_num]:
                     cell.fill      = page_fill
                     cell.alignment = page_align
+                    cell.border    = thin_border
                 ws[f'B{page_row_num}'].font = page_font
 
             url    = r['url']
@@ -771,15 +786,27 @@ def api_export():
                 else:           mv = f'down_{abs(diff)}'
                 ls_pos, ls_date = None, None
 
-            mv_text   = _movement_text(mv, ls_pos, ls_date)
-            row_num   = ws.max_row + 1
+            mv_text  = _movement_text(mv, ls_pos, ls_date)
+            row_num  = ws.max_row + 1
             ws.append([r['position'], url, mv_text])
 
-            # Color URL and Movement cells by sentiment
-            sentiment = sentiment_map.get(url, 'neutral')
+            tag       = tag_map.get(url, {})
+            sentiment = tag.get('sentiment', 'neutral')
+            owned     = tag.get('owned', False)
+
             fill = red_fill if sentiment == 'negative' else green_fill
+
+            # Borders on all 3 cells
+            for col in ('A', 'B', 'C'):
+                ws[f'{col}{row_num}'].border = thin_border
+
+            # URL cell: fill + yellow font if starred/owned
             ws[f'B{row_num}'].fill = fill
+            ws[f'B{row_num}'].font = yellow_font if owned else black_font
+
+            # Movement cell: fill + yellow font if notable movement
             ws[f'C{row_num}'].fill = fill
+            ws[f'C{row_num}'].font = yellow_font if needs_yellow_movement(mv) else black_font
 
     conn.close()
 
