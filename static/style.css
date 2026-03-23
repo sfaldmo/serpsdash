@@ -267,19 +267,22 @@ tr.row-negative:hover td { background: #ffcdd2; }
 
 /* URL cell */
 .url-title {
-  font-weight: 600;
+  font-weight: 400;
   font-size: 13px;
   color: var(--text);
   display: block;
   margin-bottom: 3px;
 }
-.url-link {
-  font-size: 11px;
+.url-link { color: #1565c0; }
+.url-link-primary {
+  font-size: 13px;
+  font-weight: 600;
   color: #1565c0;
   text-decoration: none;
   word-break: break-all;
 }
 .url-link:hover { text-decoration: underline; }
+.url-subtitle { font-size: 11px; color: var(--text-muted); word-break: break-all; }
 
 /* Owned asset toggle button */
 .owned-btn {

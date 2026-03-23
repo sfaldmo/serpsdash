@@ -114,10 +114,10 @@ function renderTable(results) {
       <td class="col-movement">${renderMovement(r)}</td>
       <td class="col-url">
         <span class="url-title">
-          ${escHtml(r.title || '(no title)')}
+          <a class="url-link url-link-primary" href="${escHtml(r.url)}" target="_blank" rel="noopener">${escHtml(truncate(r.url, 60))}</a>
           ${renderOwnedBtn(r.url, r.owned)}
         </span>
-        <a class="url-link" href="${escHtml(r.url)}" target="_blank" rel="noopener">${escHtml(truncate(r.url, 60))}</a>
+        <span class="url-subtitle">${escHtml(r.title || '(no title)')}</span>
       </td>
     `;
 
@@ -302,10 +302,10 @@ function renderCompare(data) {
       <td class="col-sentiment">${renderSentimentBtn(r.url, r.sentiment)}</td>
       <td class="col-url">
         <span class="url-title">
-          ${escHtml(r.title || '(no title)')}
+          <a class="url-link url-link-primary" href="${escHtml(r.url)}" target="_blank" rel="noopener">${escHtml(truncate(r.url, 65))}</a>
           ${renderOwnedBtn(r.url, r.owned)}
         </span>
-        <a class="url-link" href="${escHtml(r.url)}" target="_blank" rel="noopener">${escHtml(truncate(r.url, 65))}</a>
+        <span class="url-subtitle">${escHtml(r.title || '(no title)')}</span>
       </td>
       <td class="col-pos-num">${posA}</td>
       <td class="col-pos-num">${posB}</td>
