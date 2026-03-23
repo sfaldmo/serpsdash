@@ -99,7 +99,17 @@ function renderTable(results) {
 
   tbody.innerHTML = '';
 
+  let lastPage = 0;
   results.forEach(r => {
+    const page = Math.ceil(r.position / 10);
+    if (page !== lastPage) {
+      lastPage = page;
+      const sep = document.createElement('tr');
+      sep.className = 'page-separator';
+      sep.innerHTML = `<td colspan="4">Page ${page}</td>`;
+      tbody.appendChild(sep);
+    }
+
     const tr = document.createElement('tr');
     tr.dataset.url = r.url;
 
@@ -285,7 +295,19 @@ function renderCompare(data) {
   document.getElementById('compare-head-b').textContent = data.week_b;
 
   tbody.innerHTML = '';
+  let lastComparePage = 0;
   data.rows.forEach(r => {
+    if (r.pos_b != null) {
+      const page = Math.ceil(r.pos_b / 10);
+      if (page !== lastComparePage) {
+        lastComparePage = page;
+        const sep = document.createElement('tr');
+        sep.className = 'page-separator';
+        sep.innerHTML = `<td colspan="5">Page ${page}</td>`;
+        tbody.appendChild(sep);
+      }
+    }
+
     const tr = document.createElement('tr');
     if (r.sentiment === 'negative') tr.classList.add('row-negative');
     else tr.classList.add('row-neutral');

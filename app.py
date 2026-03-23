@@ -123,7 +123,7 @@ def api_results():
         LEFT JOIN url_tags ut ON sr.url = ut.url
         WHERE  sr.keyword_id = ? AND sr.week_id = ?
         ORDER  BY sr.position
-        LIMIT 35
+        LIMIT 100
     ''', (keyword_id, week_id)).fetchall()
 
     # Previous week
