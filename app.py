@@ -751,9 +751,11 @@ def api_export():
 
         seen_urls = set()
         current_page = 0
+        result_count = 0
 
         for r in rows:
-            page = (r['position'] - 1) // 10 + 1
+            result_count += 1
+            page = (result_count - 1) // 10 + 1
             if page != current_page:
                 current_page = page
                 page_row_num = ws.max_row + 1
