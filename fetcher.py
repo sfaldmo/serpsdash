@@ -38,6 +38,7 @@ def fetch_keyword(keyword, week_date_str, db_path, api_key=None):
             'google_domain': 'google.com',
             'gl': 'us',
             'hl': 'en',
+            'device': 'desktop',
         }
         url = f'{SCALESERP_ENDPOINT}?{urllib.parse.urlencode(params)}'
         req = urllib.request.Request(url, headers={'User-Agent': 'SERP-Dashboard/1.0'})

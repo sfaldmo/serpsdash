@@ -168,13 +168,18 @@ def api_results():
 
     # Current week
     rows = conn.execute('''
-        SELECT sr.position, sr.url, sr.title, sr.snippet, ut.sentiment, ut.owned
+        SELECT sr.position, sr.url, sr.title, sr.snippet
         FROM   serp_results sr
-        LEFT JOIN url_tags ut ON sr.url = ut.url
         WHERE  sr.keyword_id = ? AND sr.week_id = ?
         ORDER  BY sr.position
         LIMIT 100
     ''', (keyword_id, week_id)).fetchall()
+
+    # Load tags by normalized URL so mismatched tracking params don't break lookups
+    tag_map = {
+        normalize_url(r['url']): {'sentiment': r['sentiment'], 'owned': bool(r['owned'])}
+        for r in conn.execute('SELECT url, sentiment, owned FROM url_tags').fetchall()
+    }
 
     # Previous week
     prev = conn.execute('''
@@ -248,13 +253,14 @@ def api_results():
                 movement = f'down_{abs(diff)}'
             mv_val = diff
 
+        tag = tag_map.get(norm_url, {})
         out.append({
             'position':       r['position'],
             'url':            url,
             'title':          r['title']   or '',
             'snippet':        r['snippet'] or '',
-            'sentiment':      r['sentiment'] or 'neutral',
-            'owned':          bool(r['owned']) if r['owned'] is not None else False,
+            'sentiment':      tag.get('sentiment', 'neutral'),
+            'owned':          tag.get('owned', False),
             'movement':       movement,
             'movement_val':   mv_val,
             'is_duplicate':   is_dup,
@@ -317,7 +323,7 @@ def api_weeks():
 @app.route('/api/tag', methods=['POST'])
 def api_tag():
     data      = request.get_json(force=True)
-    url       = data.get('url', '').strip()
+    url       = normalize_url(data.get('url', '').strip())
     sentiment = data.get('sentiment')
     notes     = data.get('notes', '')
     owned     = data.get('owned')   # None means "don't change it"
@@ -391,16 +397,28 @@ def api_compare():
 
     conn = get_db()
 
+    compare_tag_map = {
+        normalize_url(r['url']): {'sentiment': r['sentiment'], 'owned': bool(r['owned'])}
+        for r in conn.execute('SELECT url, sentiment, owned FROM url_tags').fetchall()
+    }
+
     def get_week_results(week_id):
         rows = conn.execute('''
-            SELECT sr.position, sr.url, sr.title, ut.sentiment, ut.owned
+            SELECT sr.position, sr.url, sr.title
             FROM   serp_results sr
-            LEFT JOIN url_tags ut ON sr.url = ut.url
             WHERE  sr.keyword_id = ? AND sr.week_id = ?
             ORDER  BY sr.position
         ''', (keyword_id, week_id)).fetchall()
-        return {r['url']: {'position': r['position'], 'title': r['title'] or '', 'sentiment': r['sentiment'] or 'neutral', 'owned': bool(r['owned']) if r['owned'] is not None else False}
-                for r in rows}
+        result = {}
+        for r in rows:
+            tag = compare_tag_map.get(normalize_url(r['url']), {})
+            result[r['url']] = {
+                'position':  r['position'],
+                'title':     r['title'] or '',
+                'sentiment': tag.get('sentiment', 'neutral'),
+                'owned':     tag.get('owned', False),
+            }
+        return result
 
     week_a_date = conn.execute('SELECT week_date FROM weeks WHERE id=?', (week_a_id,)).fetchone()
     week_b_date = conn.execute('SELECT week_date FROM weeks WHERE id=?', (week_b_id,)).fetchone()
@@ -572,11 +590,19 @@ def api_stats():
     ).fetchone()[0]
 
     # Green = positive + neutral (anything not flagged red)
-    neg_count = conn.execute('''
-        SELECT COUNT(*) FROM serp_results sr
-        JOIN url_tags ut ON sr.url = ut.url
-        WHERE sr.keyword_id=? AND sr.week_id=? AND ut.sentiment="negative"
-    ''', (keyword_id, week_id)).fetchone()[0]
+    # Use normalized URL matching so tracking-param variants still hit the right tag
+    curr_urls = [
+        normalize_url(r[0])
+        for r in conn.execute(
+            'SELECT url FROM serp_results WHERE keyword_id=? AND week_id=?',
+            (keyword_id, week_id)
+        ).fetchall()
+    ]
+    neg_tags = {
+        normalize_url(r[0])
+        for r in conn.execute('SELECT url FROM url_tags WHERE sentiment="negative"').fetchall()
+    }
+    neg_count = sum(1 for u in curr_urls if u in neg_tags)
 
     pos_count = total - neg_count   # green = everything that isn't red
 
