@@ -174,6 +174,7 @@ function renderTable(results) {
           ${renderOwnedBtn(r.url, r.owned)}
         </span>
         <span class="url-subtitle">${escHtml(r.title || '(no title)')}</span>
+        ${r.snippet ? `<span class="url-snippet">${escHtml(r.snippet)}</span>` : ''}
       </td>
     `;
 
