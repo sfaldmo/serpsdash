@@ -127,6 +127,39 @@ if _db_dir:
 init_db()
 
 
+def normalize_existing_urls():
+    """One-time migration: strip tracking params from URLs already stored in the DB."""
+    conn = get_db()
+
+    # Fix serp_results — no unique constraint on URL so plain UPDATE is safe
+    dirty = conn.execute(
+        "SELECT id, url FROM serp_results WHERE url LIKE '%srsltid=%' OR url LIKE '%?srs=%' OR url LIKE '%&srs=%'"
+    ).fetchall()
+    for row in dirty:
+        clean = normalize_url(row['url'])
+        if clean != row['url']:
+            conn.execute("UPDATE serp_results SET url=? WHERE id=?", (clean, row['id']))
+
+    # Fix url_tags — url is UNIQUE so handle conflicts by deleting the stale duplicate
+    dirty_tags = conn.execute(
+        "SELECT id, url FROM url_tags WHERE url LIKE '%srsltid=%' OR url LIKE '%?srs=%' OR url LIKE '%&srs=%'"
+    ).fetchall()
+    for row in dirty_tags:
+        clean = normalize_url(row['url'])
+        if clean != row['url']:
+            try:
+                conn.execute("UPDATE url_tags SET url=? WHERE id=?", (clean, row['id']))
+            except Exception:
+                # Normalized URL already exists — remove the tracking-param duplicate
+                conn.execute("DELETE FROM url_tags WHERE id=?", (row['id'],))
+
+    conn.commit()
+    conn.close()
+
+
+normalize_existing_urls()
+
+
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
