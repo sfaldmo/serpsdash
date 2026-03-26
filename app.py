@@ -646,20 +646,44 @@ def api_stats():
     ''', (week_id,)).fetchone()
 
     new_count = 0
+    curr_week_date_row = conn.execute(
+        'SELECT week_date FROM weeks WHERE id=?', (week_id,)
+    ).fetchone()
+    curr_week_date_val = curr_week_date_row['week_date'] if curr_week_date_row else None
+
+    curr_raw_urls = [
+        r[0] for r in conn.execute(
+            'SELECT url FROM serp_results WHERE keyword_id=? AND week_id=?',
+            (keyword_id, week_id)
+        ).fetchall()
+    ]
+
     if prev:
-        prev_urls = set(
-            r[0] for r in conn.execute(
+        prev_norm_urls = set(
+            normalize_url(r[0]) for r in conn.execute(
                 'SELECT url FROM serp_results WHERE keyword_id=? AND week_id=?',
                 (keyword_id, prev['id'])
             ).fetchall()
         )
-        curr_urls = set(
-            r[0] for r in conn.execute(
-                'SELECT url FROM serp_results WHERE keyword_id=? AND week_id=?',
-                (keyword_id, week_id)
-            ).fetchall()
-        )
-        new_count = len(curr_urls - prev_urls)
+        not_in_prev = [u for u in curr_raw_urls if normalize_url(u) not in prev_norm_urls]
+    else:
+        # No previous week — every URL is new
+        not_in_prev = curr_raw_urls
+
+    if not_in_prev and curr_week_date_val:
+        # Exclude URLs that appeared in any earlier week (those are "returned", not "new")
+        placeholders = ','.join(['?'] * len(not_in_prev))
+        has_history = set()
+        for hr in conn.execute(f'''
+            SELECT DISTINCT url FROM serp_results sr
+            JOIN weeks w ON sr.week_id = w.id
+            WHERE sr.keyword_id=? AND sr.url IN ({placeholders})
+              AND w.week_date < ?
+        ''', [keyword_id] + not_in_prev + [str(curr_week_date_val)]).fetchall():
+            has_history.add(normalize_url(hr['url']))
+        new_count = sum(1 for u in not_in_prev if normalize_url(u) not in has_history)
+    else:
+        new_count = len(not_in_prev)
 
     owned_count = conn.execute('''\
         SELECT COUNT(*) FROM serp_results sr
