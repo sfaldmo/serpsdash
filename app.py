@@ -651,24 +651,25 @@ def api_stats():
     ).fetchone()
     curr_week_date_val = curr_week_date_row['week_date'] if curr_week_date_row else None
 
-    curr_raw_urls = [
-        r[0] for r in conn.execute(
+    # Deduplicate by normalized URL (mirrors api_results duplicate-detection logic)
+    curr_norm_urls = list({
+        normalize_url(r[0]) for r in conn.execute(
             'SELECT url FROM serp_results WHERE keyword_id=? AND week_id=?',
             (keyword_id, week_id)
         ).fetchall()
-    ]
+    })
 
     if prev:
-        prev_norm_urls = set(
+        prev_norm_urls = {
             normalize_url(r[0]) for r in conn.execute(
                 'SELECT url FROM serp_results WHERE keyword_id=? AND week_id=?',
                 (keyword_id, prev['id'])
             ).fetchall()
-        )
-        not_in_prev = [u for u in curr_raw_urls if normalize_url(u) not in prev_norm_urls]
+        }
+        not_in_prev = [u for u in curr_norm_urls if u not in prev_norm_urls]
     else:
         # No previous week — every URL is new
-        not_in_prev = curr_raw_urls
+        not_in_prev = curr_norm_urls
 
     if not_in_prev and curr_week_date_val:
         # Exclude URLs that appeared in any earlier week (those are "returned", not "new")
@@ -681,7 +682,7 @@ def api_stats():
               AND w.week_date < ?
         ''', [keyword_id] + not_in_prev + [str(curr_week_date_val)]).fetchall():
             has_history.add(normalize_url(hr['url']))
-        new_count = sum(1 for u in not_in_prev if normalize_url(u) not in has_history)
+        new_count = sum(1 for u in not_in_prev if u not in has_history)
     else:
         new_count = len(not_in_prev)
 
