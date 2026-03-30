@@ -548,23 +548,8 @@ def api_volatility():
 
 
 
-def _set_job(job_id, payload):
-    conn = sqlite3.connect(DB_PATH)
-    conn.execute(
-        'INSERT OR REPLACE INTO fetch_jobs (id, status, result_json) VALUES (?, ?, ?)',
-        (job_id, payload['status'], json.dumps(payload))
-    )
-    conn.commit()
-    conn.close()
-
-
-def _get_job(job_id):
-    conn = sqlite3.connect(DB_PATH)
-    row = conn.execute('SELECT result_json FROM fetch_jobs WHERE id=?', (job_id,)).fetchone()
-    conn.close()
-    if row is None:
-        return None
-    return json.loads(row[0])
+_fetch_jobs = {}
+_fetch_jobs_lock = threading.Lock()
 
 
 def _run_fetch_job(job_id, week_date, db_path, api_key):
@@ -573,15 +558,17 @@ def _run_fetch_job(job_id, week_date, db_path, api_key):
         results = fetch_all(week_date, db_path, api_key)
         total   = sum(v['count'] for v in results.values())
         errors  = {k: v['error'] for k, v in results.items() if v['error']}
-        _set_job(job_id, {
-            'status': 'done',
-            'ok': True,
-            'imported': total,
-            'results': results,
-            'errors': errors,
-        })
+        with _fetch_jobs_lock:
+            _fetch_jobs[job_id] = {
+                'status': 'done',
+                'ok': True,
+                'imported': total,
+                'results': results,
+                'errors': errors,
+            }
     except Exception as e:
-        _set_job(job_id, {'status': 'error', 'error': str(e)})
+        with _fetch_jobs_lock:
+            _fetch_jobs[job_id] = {'status': 'error', 'error': str(e)}
 
 
 @app.route('/api/fetch', methods=['POST'])
@@ -601,7 +588,8 @@ def api_fetch():
         return jsonify({'error': 'SCALESERP_API_KEY environment variable is not set'}), 500
 
     job_id = str(uuid.uuid4())
-    _set_job(job_id, {'status': 'running'})
+    with _fetch_jobs_lock:
+        _fetch_jobs[job_id] = {'status': 'running'}
 
     t = threading.Thread(target=_run_fetch_job, args=(job_id, week_date, DB_PATH, api_key), daemon=True)
     t.start()
@@ -612,7 +600,8 @@ def api_fetch():
 @app.route('/api/fetch_job/<job_id>')
 def api_fetch_job(job_id):
     """Poll for background fetch job status."""
-    job = _get_job(job_id)
+    with _fetch_jobs_lock:
+        job = _fetch_jobs.get(job_id)
     if job is None:
         return jsonify({'error': 'Unknown job'}), 404
     return jsonify(job)
