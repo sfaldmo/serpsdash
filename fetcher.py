@@ -26,8 +26,11 @@ def fetch_keyword(keyword, week_date_str, db_path, api_key=None):
     if not key:
         raise ValueError('SCALESERP_API_KEY environment variable not set')
 
-    # Paginate through multiple pages to collect enough results
-    all_results = []
+    # Paginate through multiple pages to collect enough results.
+    # Position is stored as (page-1)*10 + within_page_index so that
+    # page boundaries in the data match actual Google page boundaries
+    # even when a page returns fewer than 10 organic results.
+    all_results = []  # list of (absolute_position, result_dict)
     for page in range(1, PAGES_TO_FETCH + 1):
         params = {
             'api_key': key,
@@ -48,7 +51,9 @@ def fetch_keyword(keyword, week_date_str, db_path, api_key=None):
         organic = data.get('organic_results', [])
         if not organic:
             break  # no more results
-        all_results.extend(organic)
+        base = (page - 1) * 10
+        for j, result in enumerate(organic, start=1):
+            all_results.append((base + j, result))
 
     conn = sqlite3.connect(db_path)
     keyword_id = get_or_create_keyword(conn, keyword)
@@ -61,12 +66,12 @@ def fetch_keyword(keyword, week_date_str, db_path, api_key=None):
     )
 
     imported = 0
-    for i, result in enumerate(all_results, start=1):
+    for position, result in all_results:
         link    = result.get('link', '').strip()
         title   = result.get('title', '').strip()
         snippet = result.get('snippet', '').strip()
         if link:
-            insert_result(conn, keyword_id, week_id, i, link, title, snippet)
+            insert_result(conn, keyword_id, week_id, position, link, title, snippet)
             imported += 1
 
     conn.commit()

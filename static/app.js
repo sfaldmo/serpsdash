@@ -144,10 +144,8 @@ function renderTable(results) {
   tbody.innerHTML = '';
 
   let lastPage = 0;
-  let resultCount = 0;
   results.forEach(r => {
-    resultCount++;
-    const page = Math.ceil(resultCount / 10);
+    const page = Math.ceil(r.position / 10);
     if (page !== lastPage) {
       lastPage = page;
       const sep = document.createElement('tr');
