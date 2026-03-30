@@ -3,6 +3,8 @@ import sqlite3
 import os
 import json
 import functools
+import threading
+import uuid
 from datetime import datetime
 
 app = Flask(__name__)
@@ -540,6 +542,30 @@ def api_volatility():
 
 
 
+# In-memory job store: job_id -> {status, result, error}
+_fetch_jobs = {}
+_fetch_jobs_lock = threading.Lock()
+
+
+def _run_fetch_job(job_id, week_date, db_path, api_key):
+    from fetcher import fetch_all
+    try:
+        results = fetch_all(week_date, db_path, api_key)
+        total   = sum(v['count'] for v in results.values())
+        errors  = {k: v['error'] for k, v in results.items() if v['error']}
+        with _fetch_jobs_lock:
+            _fetch_jobs[job_id] = {
+                'status': 'done',
+                'ok': True,
+                'imported': total,
+                'results': results,
+                'errors': errors,
+            }
+    except Exception as e:
+        with _fetch_jobs_lock:
+            _fetch_jobs[job_id] = {'status': 'error', 'error': str(e)}
+
+
 @app.route('/api/fetch', methods=['POST'])
 def api_fetch():
     data      = request.get_json(force=True)
@@ -556,13 +582,24 @@ def api_fetch():
     if not api_key:
         return jsonify({'error': 'SCALESERP_API_KEY environment variable is not set'}), 500
 
-    from fetcher import fetch_all
-    results = fetch_all(week_date, DB_PATH, api_key)
+    job_id = str(uuid.uuid4())
+    with _fetch_jobs_lock:
+        _fetch_jobs[job_id] = {'status': 'running'}
 
-    total  = sum(v['count'] for v in results.values())
-    errors = {k: v['error'] for k, v in results.items() if v['error']}
+    t = threading.Thread(target=_run_fetch_job, args=(job_id, week_date, DB_PATH, api_key), daemon=True)
+    t.start()
 
-    return jsonify({'ok': True, 'imported': total, 'results': results, 'errors': errors})
+    return jsonify({'job_id': job_id})
+
+
+@app.route('/api/fetch_job/<job_id>')
+def api_fetch_job(job_id):
+    """Poll for background fetch job status."""
+    with _fetch_jobs_lock:
+        job = _fetch_jobs.get(job_id)
+    if job is None:
+        return jsonify({'error': 'Unknown job'}), 404
+    return jsonify(job)
 
 
 @app.route('/api/fetch_status')

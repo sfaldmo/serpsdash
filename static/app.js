@@ -555,9 +555,34 @@ function setupFetchModal() {
     })
       .then(r => r.json())
       .then(data => {
-        if (data.ok) {
-          // Show per-keyword results
-          Object.entries(data.results).forEach(([kw, v]) => {
+        if (data.error) { showFetchStatus('error', data.error); submitBtn.disabled = false; submitBtn.textContent = 'Fetch Now'; return; }
+        // Background job started — poll for completion
+        pollFetchJob(data.job_id);
+      })
+      .catch(() => { showFetchStatus('error', 'Network error.'); submitBtn.disabled = false; submitBtn.textContent = 'Fetch Now'; });
+
+  function pollFetchJob(jobId) {
+    let dots = 0;
+    const timer = setInterval(() => {
+      dots = (dots + 1) % 4;
+      submitBtn.textContent = 'Fetching' + '.'.repeat(dots + 1);
+
+      fetch(`/api/fetch_job/${jobId}`)
+        .then(r => r.json())
+        .then(job => {
+          if (job.status === 'running') return; // still going
+
+          clearInterval(timer);
+          submitBtn.disabled    = false;
+          submitBtn.textContent = 'Fetch Now';
+
+          if (job.status === 'error') {
+            showFetchStatus('error', job.error || 'Fetch failed.');
+            return;
+          }
+
+          // Done — show per-keyword results
+          Object.entries(job.results).forEach(([kw, v]) => {
             const li = document.createElement('div');
             li.className = 'fetch-log-row';
             if (v.error) {
@@ -568,22 +593,17 @@ function setupFetchModal() {
             logEl.appendChild(li);
           });
 
-          const hasErrors = Object.values(data.results).some(v => v.error);
+          const hasErrors = Object.values(job.results).some(v => v.error);
           if (hasErrors) {
-            showFetchStatus('error', `Fetched ${data.imported} results (some keywords failed — see above).`);
+            showFetchStatus('error', `Fetched ${job.imported} results (some keywords failed — see above).`);
           } else {
-            showFetchStatus('success', `Successfully fetched ${data.imported} results. Refreshing…`);
+            showFetchStatus('success', `Successfully fetched ${job.imported} results. Refreshing…`);
             setTimeout(() => { overlay.classList.add('hidden'); window.location.reload(); }, 1800);
           }
-        } else {
-          showFetchStatus('error', data.error || 'Fetch failed.');
-        }
-      })
-      .catch(() => showFetchStatus('error', 'Network error.'))
-      .finally(() => {
-        submitBtn.disabled    = false;
-        submitBtn.textContent = 'Fetch Now';
-      });
+        })
+        .catch(() => { clearInterval(timer); showFetchStatus('error', 'Lost connection while fetching.'); submitBtn.disabled = false; submitBtn.textContent = 'Fetch Now'; });
+    }, 2000);
+  }
   });
 
   function showFetchStatus(type, msg) {
