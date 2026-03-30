@@ -1,10 +1,8 @@
-from flask import Flask, render_template, request, jsonify, redirect, url_for, Response, session
+from flask import Flask, render_template, request, jsonify, redirect, url_for, Response, session, stream_with_context
 import sqlite3
 import os
 import json
 import functools
-import threading
-import uuid
 from datetime import datetime
 
 app = Flask(__name__)
@@ -548,31 +546,11 @@ def api_volatility():
 
 
 
-_fetch_jobs = {}
-_fetch_jobs_lock = threading.Lock()
-
-
-def _run_fetch_job(job_id, week_date, db_path, api_key):
-    from fetcher import fetch_all
-    try:
-        results = fetch_all(week_date, db_path, api_key)
-        total   = sum(v['count'] for v in results.values())
-        errors  = {k: v['error'] for k, v in results.items() if v['error']}
-        with _fetch_jobs_lock:
-            _fetch_jobs[job_id] = {
-                'status': 'done',
-                'ok': True,
-                'imported': total,
-                'results': results,
-                'errors': errors,
-            }
-    except Exception as e:
-        with _fetch_jobs_lock:
-            _fetch_jobs[job_id] = {'status': 'error', 'error': str(e)}
-
-
 @app.route('/api/fetch', methods=['POST'])
 def api_fetch():
+    """Stream fetch progress as newline-delimited JSON.
+    Each line is {"keyword":..., "count":..., "error":...} or {"done":true, "imported":N}.
+    """
     data      = request.get_json(force=True)
     week_date = data.get('week_date', '').strip()
 
@@ -587,24 +565,19 @@ def api_fetch():
     if not api_key:
         return jsonify({'error': 'SCALESERP_API_KEY environment variable is not set'}), 500
 
-    job_id = str(uuid.uuid4())
-    with _fetch_jobs_lock:
-        _fetch_jobs[job_id] = {'status': 'running'}
+    def generate():
+        from fetcher import KEYWORDS, fetch_keyword
+        total = 0
+        for kw in KEYWORDS:
+            try:
+                count = fetch_keyword(kw, week_date, DB_PATH, api_key)
+                total += count
+                yield json.dumps({'keyword': kw, 'count': count, 'error': None}) + '\n'
+            except Exception as e:
+                yield json.dumps({'keyword': kw, 'count': 0, 'error': str(e)}) + '\n'
+        yield json.dumps({'done': True, 'imported': total}) + '\n'
 
-    t = threading.Thread(target=_run_fetch_job, args=(job_id, week_date, DB_PATH, api_key), daemon=True)
-    t.start()
-
-    return jsonify({'job_id': job_id})
-
-
-@app.route('/api/fetch_job/<job_id>')
-def api_fetch_job(job_id):
-    """Poll for background fetch job status."""
-    with _fetch_jobs_lock:
-        job = _fetch_jobs.get(job_id)
-    if job is None:
-        return jsonify({'error': 'Unknown job'}), 404
-    return jsonify(job)
+    return Response(stream_with_context(generate()), mimetype='application/x-ndjson')
 
 
 @app.route('/api/fetch_status')

@@ -551,57 +551,66 @@ function setupFetchModal() {
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify({ week_date: weekDate }),
     })
-      .then(r => r.json())
-      .then(data => {
-        if (data.error) { showFetchStatus('error', data.error); submitBtn.disabled = false; submitBtn.textContent = 'Fetch Now'; return; }
-        // Background job started — poll for completion
-        pollFetchJob(data.job_id);
-      })
-      .catch(() => { showFetchStatus('error', 'Network error.'); submitBtn.disabled = false; submitBtn.textContent = 'Fetch Now'; });
+    .then(resp => {
+      if (!resp.ok || !resp.body) throw new Error('Bad response');
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let hasErrors = false;
+      let imported = 0;
 
-  function pollFetchJob(jobId) {
-    let dots = 0;
-    const timer = setInterval(() => {
-      dots = (dots + 1) % 4;
-      submitBtn.textContent = 'Fetching' + '.'.repeat(dots + 1);
+      function readChunk() {
+        reader.read().then(({ done, value }) => {
+          if (value) buffer += decoder.decode(value, { stream: !done });
 
-      fetch(`/api/fetch_job/${jobId}`)
-        .then(r => r.json())
-        .then(job => {
-          if (job.status === 'running') return; // still going
-
-          clearInterval(timer);
-          submitBtn.disabled    = false;
-          submitBtn.textContent = 'Fetch Now';
-
-          if (job.status === 'error') {
-            showFetchStatus('error', job.error || 'Fetch failed.');
-            return;
-          }
-
-          // Done — show per-keyword results
-          Object.entries(job.results).forEach(([kw, v]) => {
-            const li = document.createElement('div');
-            li.className = 'fetch-log-row';
-            if (v.error) {
-              li.innerHTML = `<span class="skip">✕</span> ${escHtml(kw)} — <em>${escHtml(v.error)}</em>`;
-            } else {
-              li.innerHTML = `<span class="check">✓</span> ${escHtml(kw)} — ${v.count} results`;
-            }
-            logEl.appendChild(li);
+          // Process all complete lines
+          const lines = buffer.split('\n');
+          buffer = lines.pop(); // keep incomplete trailing line
+          lines.forEach(line => {
+            if (!line.trim()) return;
+            try {
+              const msg = JSON.parse(line);
+              if (msg.done) {
+                imported = msg.imported;
+                return;
+              }
+              const li = document.createElement('div');
+              li.className = 'fetch-log-row';
+              if (msg.error) {
+                hasErrors = true;
+                li.innerHTML = `<span class="skip">✕</span> ${escHtml(msg.keyword)} — <em>${escHtml(msg.error)}</em>`;
+              } else {
+                li.innerHTML = `<span class="check">✓</span> ${escHtml(msg.keyword)} — ${msg.count} results`;
+              }
+              logEl.appendChild(li);
+            } catch (_) {}
           });
 
-          const hasErrors = Object.values(job.results).some(v => v.error);
-          if (hasErrors) {
-            showFetchStatus('error', `Fetched ${job.imported} results (some keywords failed — see above).`);
+          if (done) {
+            submitBtn.disabled    = false;
+            submitBtn.textContent = 'Fetch Now';
+            if (hasErrors) {
+              showFetchStatus('error', `Fetched ${imported} results (some keywords failed — see above).`);
+            } else {
+              showFetchStatus('success', `Successfully fetched ${imported} results. Refreshing…`);
+              setTimeout(() => { overlay.classList.add('hidden'); window.location.reload(); }, 1800);
+            }
           } else {
-            showFetchStatus('success', `Successfully fetched ${job.imported} results. Refreshing…`);
-            setTimeout(() => { overlay.classList.add('hidden'); window.location.reload(); }, 1800);
+            readChunk();
           }
-        })
-        .catch(() => { clearInterval(timer); showFetchStatus('error', 'Lost connection while fetching.'); submitBtn.disabled = false; submitBtn.textContent = 'Fetch Now'; });
-    }, 2000);
-  }
+        }).catch(() => {
+          showFetchStatus('error', 'Connection lost while fetching.');
+          submitBtn.disabled    = false;
+          submitBtn.textContent = 'Fetch Now';
+        });
+      }
+      readChunk();
+    })
+    .catch(() => {
+      showFetchStatus('error', 'Network error.');
+      submitBtn.disabled    = false;
+      submitBtn.textContent = 'Fetch Now';
+    });
   });
 
   function showFetchStatus(type, msg) {
