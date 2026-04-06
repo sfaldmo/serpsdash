@@ -77,7 +77,48 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Fetch modal
   setupFetchModal();
+
+  // Keyword health check
+  checkKeywordHealth();
+
+  // Dismiss banner
+  document.getElementById('fetch-error-dismiss').addEventListener('click', () => {
+    document.getElementById('fetch-error-banner').classList.add('hidden');
+  });
 });
+
+function checkKeywordHealth() {
+  fetch('/api/keyword_health')
+    .then(r => r.json())
+    .then(data => {
+      const missing = data.keywords.filter(k => k.count === 0);
+      // Add warning badges to nav buttons
+      document.querySelectorAll('.kw-btn').forEach(btn => {
+        const kwId = parseInt(btn.dataset.id, 10);
+        const km = missing.find(m => m.id === kwId);
+        const existing = btn.querySelector('.kw-warn');
+        if (existing) existing.remove();
+        if (km) {
+          const badge = document.createElement('span');
+          badge.className = 'kw-warn';
+          badge.textContent = '⚠';
+          badge.title = `No data for ${data.week_date}`;
+          btn.appendChild(badge);
+        }
+      });
+      // Show banner if any keywords are missing
+      const banner = document.getElementById('fetch-error-banner');
+      if (missing.length) {
+        const names = missing.map(m => m.name).join(', ');
+        document.getElementById('fetch-error-text').textContent =
+          `⚠ No data for latest week (${data.week_date}): ${names}. Run a fetch to update.`;
+        banner.classList.remove('hidden');
+      } else {
+        banner.classList.add('hidden');
+      }
+    })
+    .catch(() => {}); // fail silently — health check is non-critical
+}
 
 // -----------------------------------------------------------------------
 // Load results for active keyword + week
@@ -591,6 +632,7 @@ function setupFetchModal() {
             submitBtn.textContent = 'Fetch Now';
             if (hasErrors) {
               showFetchStatus('error', `Fetched ${imported} results (some keywords failed — see above).`);
+              checkKeywordHealth();
             } else {
               showFetchStatus('success', `Successfully fetched ${imported} results. Refreshing…`);
               setTimeout(() => { overlay.classList.add('hidden'); window.location.reload(); }, 1800);

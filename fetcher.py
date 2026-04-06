@@ -27,10 +27,10 @@ def fetch_keyword(keyword, week_date_str, db_path, api_key=None):
         raise ValueError('SCALESERP_API_KEY environment variable not set')
 
     # Paginate through multiple pages to collect enough results.
-    # Position is stored as (page-1)*10 + within_page_index so that
-    # page boundaries in the data match actual Google page boundaries
-    # even when a page returns fewer than 10 organic results.
+    # Position increments globally so gaps from ads/featured snippets
+    # on one page don't create jumps at the start of the next page.
     all_results = []  # list of (absolute_position, result_dict)
+    global_pos = 0
     for page in range(1, PAGES_TO_FETCH + 1):
         params = {
             'api_key': key,
@@ -45,15 +45,19 @@ def fetch_keyword(keyword, week_date_str, db_path, api_key=None):
         }
         url = f'{SCALESERP_ENDPOINT}?{urllib.parse.urlencode(params)}'
         req = urllib.request.Request(url, headers={'User-Agent': 'SERP-Dashboard/1.0'})
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            data = json.loads(resp.read().decode('utf-8'))
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                data = json.loads(resp.read().decode('utf-8'))
+        except Exception as e:
+            print(f'[fetch_keyword] page {page} error for "{keyword}": {e}')
+            break
 
         organic = data.get('organic_results', [])
         if not organic:
             break  # no more results
-        base = (page - 1) * 10
-        for j, result in enumerate(organic, start=1):
-            all_results.append((base + j, result))
+        for result in organic:
+            global_pos += 1
+            all_results.append((global_pos, result))
 
     conn = sqlite3.connect(db_path)
     keyword_id = get_or_create_keyword(conn, keyword)

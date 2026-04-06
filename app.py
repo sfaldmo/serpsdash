@@ -546,6 +546,30 @@ def api_volatility():
 
 
 
+@app.route('/api/keyword_health')
+def api_keyword_health():
+    """Return result counts per keyword for the latest week, so the UI can flag missing data."""
+    conn = get_db()
+    latest = conn.execute('SELECT id, week_date FROM weeks ORDER BY week_date DESC LIMIT 1').fetchone()
+    if not latest:
+        conn.close()
+        return jsonify({'week_date': None, 'keywords': []})
+
+    rows = conn.execute('''
+        SELECT k.id, k.name, COUNT(sr.id) as count
+        FROM keywords k
+        LEFT JOIN serp_results sr ON sr.keyword_id = k.id AND sr.week_id = ?
+        GROUP BY k.id
+        ORDER BY k.name
+    ''', (latest['id'],)).fetchall()
+    conn.close()
+
+    return jsonify({
+        'week_date': str(latest['week_date']),
+        'keywords': [{'id': r['id'], 'name': r['name'], 'count': r['count']} for r in rows],
+    })
+
+
 @app.route('/api/fetch', methods=['POST'])
 def api_fetch():
     """Stream fetch progress as newline-delimited JSON.
