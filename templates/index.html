@@ -171,10 +171,20 @@
       <button id="fetch-modal-close">&times;</button>
     </div>
     <div id="modal-body">
-      <p>Pulls fresh Google results for all 7 keywords via ScaleSERP API.</p>
       <label>Week Date
         <input type="date" id="fetch-date">
       </label>
+      <div id="fetch-keyword-select">
+        <div class="fetch-kw-header">
+          <span>Keywords</span>
+          <a href="#" id="fetch-kw-all">All</a> / <a href="#" id="fetch-kw-none">None</a>
+        </div>
+        {% for kw in keywords %}
+        <label class="fetch-kw-label">
+          <input type="checkbox" class="fetch-kw-cb" value="{{ kw.name }}" checked> {{ kw.name }}
+        </label>
+        {% endfor %}
+      </div>
       <div id="fetch-log"></div>
       <div id="fetch-status"></div>
       <button id="fetch-submit" class="btn-primary">Fetch Now</button>

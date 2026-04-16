@@ -556,6 +556,15 @@ function setupFetchModal() {
   // Default date to today
   dateInput.value = new Date().toISOString().slice(0, 10);
 
+  document.getElementById('fetch-kw-all').addEventListener('click', e => {
+    e.preventDefault();
+    document.querySelectorAll('.fetch-kw-cb').forEach(cb => cb.checked = true);
+  });
+  document.getElementById('fetch-kw-none').addEventListener('click', e => {
+    e.preventDefault();
+    document.querySelectorAll('.fetch-kw-cb').forEach(cb => cb.checked = false);
+  });
+
   openBtn.addEventListener('click', () => {
     overlay.classList.remove('hidden');
     logEl.innerHTML   = '';
@@ -587,10 +596,13 @@ function setupFetchModal() {
     logEl.innerHTML       = '';
     statusEl.style.display = 'none';
 
+    const selected = Array.from(document.querySelectorAll('.fetch-kw-cb:checked')).map(cb => cb.value);
+    if (selected.length === 0) { showFetchStatus('error', 'Select at least one keyword.'); submitBtn.disabled = false; submitBtn.textContent = 'Fetch Now'; return; }
+
     fetch('/api/fetch', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ week_date: weekDate }),
+      body:    JSON.stringify({ week_date: weekDate, keywords: selected }),
     })
     .then(resp => {
       if (!resp.ok || !resp.body) throw new Error('Bad response');

@@ -139,6 +139,35 @@ body { display: flex; }
 }
 .btn-fetch:hover { background: #81c784; }
 
+/* Fetch keyword selector */
+#fetch-keyword-select {
+  margin: 10px 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  background: var(--bg-card);
+}
+.fetch-kw-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+.fetch-kw-header a { color: var(--accent); text-decoration: none; font-weight: 600; }
+.fetch-kw-header a:hover { text-decoration: underline; }
+.fetch-kw-label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 14px;
+  padding: 2px 0;
+  cursor: pointer;
+}
+.fetch-kw-label input[type=checkbox] { accent-color: var(--accent); cursor: pointer; }
+
 /* Fetch log rows */
 #fetch-log { margin: 12px 0 4px; display: flex; flex-direction: column; gap: 4px; }
 .fetch-log-row { font-size: 15px; color: var(--text-muted); }

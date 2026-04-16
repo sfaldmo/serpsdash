@@ -589,10 +589,13 @@ def api_fetch():
     if not api_key:
         return jsonify({'error': 'SCALESERP_API_KEY environment variable is not set'}), 500
 
+    selected = data.get('keywords') or None  # list of keyword strings, or None = all
+
     def generate():
         from fetcher import KEYWORDS, fetch_keyword
+        kw_list = [k for k in KEYWORDS if (selected is None or k in selected)]
         total = 0
-        for kw in KEYWORDS:
+        for kw in kw_list:
             try:
                 count = fetch_keyword(kw, week_date, DB_PATH, api_key)
                 total += count
