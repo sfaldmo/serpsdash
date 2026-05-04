@@ -18,7 +18,7 @@ KEYWORDS = [
 ]
 
 
-PAGES_TO_FETCH = 4  # fetches 4 pages = ~40 results
+RESULTS_TO_FETCH = 100  # organic results per keyword (ScaleSERP supports up to 100)
 
 
 def fetch_keyword(keyword, week_date_str, db_path, api_key=None):
@@ -26,38 +26,26 @@ def fetch_keyword(keyword, week_date_str, db_path, api_key=None):
     if not key:
         raise ValueError('SCALESERP_API_KEY environment variable not set')
 
-    # Paginate through multiple pages to collect enough results.
-    # Position increments globally so gaps from ads/featured snippets
-    # on one page don't create jumps at the start of the next page.
-    all_results = []  # list of (absolute_position, result_dict)
-    global_pos = 0
-    for page in range(1, PAGES_TO_FETCH + 1):
-        params = {
-            'api_key': key,
-            'q': keyword,
-            'page': page,
-            'num': 10,
-            'output': 'json',
-            'google_domain': 'google.com',
-            'gl': 'us',
-            'hl': 'en',
-            'device': 'desktop',
-        }
-        url = f'{SCALESERP_ENDPOINT}?{urllib.parse.urlencode(params)}'
-        req = urllib.request.Request(url, headers={'User-Agent': 'SERP-Dashboard/1.0'})
-        try:
-            with urllib.request.urlopen(req, timeout=30) as resp:
-                data = json.loads(resp.read().decode('utf-8'))
-        except Exception as e:
-            print(f'[fetch_keyword] page {page} error for "{keyword}": {e}')
-            break
+    params = {
+        'api_key': key,
+        'q': keyword,
+        'num': RESULTS_TO_FETCH,
+        'output': 'json',
+        'google_domain': 'google.com',
+        'gl': 'us',
+        'hl': 'en',
+        'device': 'desktop',
+    }
+    url = f'{SCALESERP_ENDPOINT}?{urllib.parse.urlencode(params)}'
+    req = urllib.request.Request(url, headers={'User-Agent': 'SERP-Dashboard/1.0'})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data = json.loads(resp.read().decode('utf-8'))
+    except Exception as e:
+        raise RuntimeError(f'ScaleSERP request failed for "{keyword}": {e}')
 
-        organic = data.get('organic_results', [])
-        if not organic:
-            break  # no more results
-        for result in organic:
-            global_pos += 1
-            all_results.append((global_pos, result))
+    organic = data.get('organic_results', [])
+    all_results = [(i + 1, result) for i, result in enumerate(organic)]
 
     conn = sqlite3.connect(db_path)
     keyword_id = get_or_create_keyword(conn, keyword)
