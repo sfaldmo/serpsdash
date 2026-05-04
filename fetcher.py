@@ -18,7 +18,7 @@ KEYWORDS = [
 ]
 
 
-RESULTS_TO_FETCH = 100  # organic results per keyword (ScaleSERP supports up to 100)
+PAGES_TO_FETCH = 5  # 5 pages × 10 = up to 50 organic results per keyword
 
 
 def fetch_keyword(keyword, week_date_str, db_path, api_key=None):
@@ -26,26 +26,35 @@ def fetch_keyword(keyword, week_date_str, db_path, api_key=None):
     if not key:
         raise ValueError('SCALESERP_API_KEY environment variable not set')
 
-    params = {
-        'api_key': key,
-        'q': keyword,
-        'num': RESULTS_TO_FETCH,
-        'output': 'json',
-        'google_domain': 'google.com',
-        'gl': 'us',
-        'hl': 'en',
-        'device': 'desktop',
-    }
-    url = f'{SCALESERP_ENDPOINT}?{urllib.parse.urlencode(params)}'
-    req = urllib.request.Request(url, headers={'User-Agent': 'SERP-Dashboard/1.0'})
-    try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            data = json.loads(resp.read().decode('utf-8'))
-    except Exception as e:
-        raise RuntimeError(f'ScaleSERP request failed for "{keyword}": {e}')
+    all_results = []
+    global_pos = 0
+    for page in range(1, PAGES_TO_FETCH + 1):
+        params = {
+            'api_key': key,
+            'q': keyword,
+            'page': page,
+            'num': 10,
+            'output': 'json',
+            'google_domain': 'google.com',
+            'gl': 'us',
+            'hl': 'en',
+            'device': 'desktop',
+        }
+        url = f'{SCALESERP_ENDPOINT}?{urllib.parse.urlencode(params)}'
+        req = urllib.request.Request(url, headers={'User-Agent': 'SERP-Dashboard/1.0'})
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                data = json.loads(resp.read().decode('utf-8'))
+        except Exception as e:
+            print(f'[fetch_keyword] page {page} error for "{keyword}": {e}')
+            break
 
-    organic = data.get('organic_results', [])
-    all_results = [(i + 1, result) for i, result in enumerate(organic)]
+        organic = data.get('organic_results', [])
+        if not organic:
+            break
+        for result in organic:
+            global_pos += 1
+            all_results.append((global_pos, result))
 
     conn = sqlite3.connect(db_path)
     keyword_id = get_or_create_keyword(conn, keyword)
