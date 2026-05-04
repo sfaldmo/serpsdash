@@ -118,6 +118,13 @@ def init_db():
     except Exception:
         pass  # column already exists
 
+    # Migration: add google_page column (NULL = fall back to ceil(position/10))
+    try:
+        conn.execute('ALTER TABLE serp_results ADD COLUMN google_page INTEGER')
+        conn.commit()
+    except Exception:
+        pass  # column already exists
+
     conn.close()
 
 
@@ -207,7 +214,7 @@ def api_results():
 
     # Current week
     rows = conn.execute('''
-        SELECT sr.position, sr.url, sr.title, sr.snippet
+        SELECT sr.position, sr.url, sr.title, sr.snippet, sr.google_page
         FROM   serp_results sr
         WHERE  sr.keyword_id = ? AND sr.week_id = ?
         ORDER  BY sr.position
@@ -293,8 +300,10 @@ def api_results():
             mv_val = diff
 
         tag = tag_map.get(norm_url, {})
+        gp = r['google_page'] if r['google_page'] is not None else -(-r['position'] // 10)
         out.append({
             'position':       r['position'],
+            'google_page':    gp,
             'url':            url,
             'title':          r['title']   or '',
             'snippet':        r['snippet'] or '',
@@ -849,7 +858,7 @@ def api_export():
 
         # Fetch results
         rows = conn.execute('''
-            SELECT sr.position, sr.url
+            SELECT sr.position, sr.url, sr.google_page
             FROM serp_results sr
             WHERE sr.keyword_id=? AND sr.week_id=?
             ORDER BY sr.position
@@ -890,7 +899,7 @@ def api_export():
         current_page = 0
 
         for r in rows:
-            page = (r['position'] - 1) // 10 + 1
+            page = r['google_page'] if r['google_page'] is not None else -(-r['position'] // 10)
             if page != current_page:
                 current_page = page
                 page_row_num = ws.max_row + 1

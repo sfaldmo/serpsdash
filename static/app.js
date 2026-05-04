@@ -186,7 +186,7 @@ function renderTable(results) {
 
   let lastPage = 0;
   results.forEach(r => {
-    const page = Math.ceil(r.position / 10);
+    const page = r.google_page ?? Math.ceil(r.position / 10);
     if (page !== lastPage) {
       lastPage = page;
       const sep = document.createElement('tr');

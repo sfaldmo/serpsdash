@@ -97,11 +97,11 @@ def normalize_url(url):
     url = re.sub(r'[?&]srs=[^&]*',     '', url)
     return url.rstrip('?&')
 
-def insert_result(conn, keyword_id, week_id, position, url, title, snippet):
+def insert_result(conn, keyword_id, week_id, position, url, title, snippet, google_page=None):
     try:
         conn.execute(
-            'INSERT OR IGNORE INTO serp_results (keyword_id, week_id, position, url, title, snippet) VALUES (?,?,?,?,?,?)',
-            (keyword_id, week_id, position, normalize_url(url), title or '', snippet or '')
+            'INSERT OR IGNORE INTO serp_results (keyword_id, week_id, position, url, title, snippet, google_page) VALUES (?,?,?,?,?,?,?)',
+            (keyword_id, week_id, position, normalize_url(url), title or '', snippet or '', google_page)
         )
     except Exception:
         pass

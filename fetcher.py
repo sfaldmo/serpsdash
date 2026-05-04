@@ -54,7 +54,7 @@ def fetch_keyword(keyword, week_date_str, db_path, api_key=None):
             break
         for result in organic:
             global_pos += 1
-            all_results.append((global_pos, result))
+            all_results.append((global_pos, page, result))
 
     conn = sqlite3.connect(db_path)
     keyword_id = get_or_create_keyword(conn, keyword)
@@ -67,12 +67,12 @@ def fetch_keyword(keyword, week_date_str, db_path, api_key=None):
     )
 
     imported = 0
-    for position, result in all_results:
+    for position, google_page, result in all_results:
         link    = result.get('link', '').strip()
         title   = result.get('title', '').strip()
         snippet = result.get('snippet', '').strip()
         if link:
-            insert_result(conn, keyword_id, week_id, position, link, title, snippet)
+            insert_result(conn, keyword_id, week_id, position, link, title, snippet, google_page)
             imported += 1
 
     conn.commit()
