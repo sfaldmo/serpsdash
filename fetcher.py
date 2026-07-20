@@ -6,8 +6,7 @@ import urllib.error
 import urllib.parse
 import json
 import sqlite3
-from concurrent.futures import ThreadPoolExecutor
-from importer import get_or_create_keyword, get_or_create_week, insert_result
+from importer import get_or_create_keyword, get_or_create_week, insert_result, normalize_url
 
 SCALESERP_ENDPOINT = 'https://api.scaleserp.com/search'
 
@@ -22,12 +21,26 @@ KEYWORDS = [
 ]
 
 
-PAGES_TO_FETCH = 5  # 5 pages × 10 = up to 50 organic results per keyword
+# Google returns a variable number of organic results per page (5-10 is typical;
+# SERP features such as videos, PAA and shopping blocks take the other slots), so
+# 5 pages does not mean 50 results. Go deeper and stop when results genuinely dry up.
+PAGES_TO_FETCH = 10
 
 REQUEST_TIMEOUT = 30    # seconds per HTTP request
 MAX_ATTEMPTS    = 4     # initial try + 3 retries
-MAX_PARALLEL    = 3     # concurrent page requests per keyword
 RETRY_STATUSES  = {408, 429, 500, 502, 503, 504}
+
+# ScaleSERP throttles concurrent requests by returning HTTP 200 with an empty
+# organic_results block rather than a 429. Fetching pages in parallel therefore
+# silently loses whole pages - measured 23 results serially vs 18 in parallel for
+# "Melaleuca", with page 2 returning 8 results serially and 0 in parallel.
+# Keep requests serial and spaced.
+REQUEST_SPACING = 0.6   # seconds between requests
+
+# Empty pages are scattered, not terminal ("Melaleuca" returns results on pages
+# 6 and 9 despite pages 5, 7 and 8 being empty), so never stop at the first empty
+# page. Only give up after this many consecutive empties.
+MAX_CONSECUTIVE_EMPTY = 3
 
 
 class FetchError(Exception):
@@ -80,7 +93,7 @@ def _get_page(keyword, page, key):
             last_err = str(e) or e.__class__.__name__
 
         if attempt < MAX_ATTEMPTS:
-            # Exponential backoff with jitter so parallel pages don't sync up.
+            # Exponential backoff with jitter to avoid hammering a throttled API.
             time.sleep((2 ** (attempt - 1)) + random.uniform(0, 0.4))
 
     raise FetchError(f'page {page} failed after {MAX_ATTEMPTS} attempts: {last_err}')
@@ -91,19 +104,34 @@ def fetch_keyword(keyword, week_date_str, db_path, api_key=None):
     if not key:
         raise ValueError('SCALESERP_API_KEY environment variable not set')
 
-    pages = list(range(1, PAGES_TO_FETCH + 1))
-
-    # Pages are independent, so fetch them concurrently to stay well inside
-    # the gunicorn request timeout, then reassemble in page order.
-    with ThreadPoolExecutor(max_workers=MAX_PARALLEL) as pool:
-        organic_by_page = list(pool.map(lambda p: _get_page(keyword, p, key), pages))
-
     all_results = []
+    seen_urls = set()
     global_pos = 0
-    for page, organic in zip(pages, organic_by_page):
+    consecutive_empty = 0
+
+    for page in range(1, PAGES_TO_FETCH + 1):
+        if page > 1:
+            time.sleep(REQUEST_SPACING)
+
+        organic = _get_page(keyword, page, key)
+
         if not organic:
-            break  # genuine end of results
+            consecutive_empty += 1
+            if consecutive_empty >= MAX_CONSECUTIVE_EMPTY:
+                break  # results have genuinely dried up
+            continue   # a single empty page proves nothing - keep going
+        consecutive_empty = 0
+
         for result in organic:
+            link = (result.get('link') or '').strip()
+            if not link:
+                continue
+            # Pages overlap (measured 33 raw results -> 31 unique), so keep the
+            # first (highest-ranked) occurrence of each URL.
+            norm = normalize_url(link)
+            if norm in seen_urls:
+                continue
+            seen_urls.add(norm)
             global_pos += 1
             all_results.append((global_pos, page, result))
 
