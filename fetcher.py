@@ -21,44 +21,37 @@ KEYWORDS = [
 ]
 
 
-# Google returns a variable number of organic results per page (5-10 is typical;
-# SERP features such as videos, PAA and shopping blocks take the other slots), so
-# 5 pages does not mean 50 results. Go deeper and stop when results genuinely dry up.
-PAGES_TO_FETCH = 10
-
-REQUEST_TIMEOUT = 30    # seconds per HTTP request
+# Google removed the num=100 parameter in Sept 2025, so every SERP page now
+# returns ~10 organic results and pagination is mandatory. ScaleSERP's
+# `max_page` fetches several pages in ONE request and tags every result with
+# its true `page` and `position_overall` — the real Google page boundaries,
+# which are variable (SERP features eat organic slots, so a page holds 5-10,
+# never a clean 10). We store those authoritative values instead of guessing.
+#
+# max_page is capped at 5 for real-time searches. We only need 3.
+PAGES_TO_FETCH  = 3
+REQUEST_TIMEOUT = 60    # one multi-page request takes longer than a single page
 MAX_ATTEMPTS    = 4     # initial try + 3 retries
 RETRY_STATUSES  = {408, 429, 500, 502, 503, 504}
-
-# ScaleSERP throttles concurrent requests by returning HTTP 200 with an empty
-# organic_results block rather than a 429. Fetching pages in parallel therefore
-# silently loses whole pages - measured 23 results serially vs 18 in parallel for
-# "Melaleuca", with page 2 returning 8 results serially and 0 in parallel.
-# Keep requests serial and spaced.
-REQUEST_SPACING = 0.6   # seconds between requests
-
-# Empty pages are scattered, not terminal ("Melaleuca" returns results on pages
-# 6 and 9 despite pages 5, 7 and 8 being empty), so never stop at the first empty
-# page. Only give up after this many consecutive empties.
-MAX_CONSECUTIVE_EMPTY = 3
 
 
 class FetchError(Exception):
     """Raised when a keyword could not be fetched after retries."""
 
 
-def _get_page(keyword, page, key):
-    """Fetch one SERP page. Returns the organic_results list.
+def _fetch_serp(keyword, key, max_page):
+    """Fetch `max_page` Google pages in one request. Returns organic_results.
 
+    Each result carries `page` and `position_overall` assigned by ScaleSERP.
     Retries transient failures (timeouts, 429, 5xx) with exponential backoff.
-    Raises FetchError if the page still cannot be fetched, so callers can tell
+    Raises FetchError if it still cannot be fetched, so callers can tell
     'no more results' apart from 'the request failed'.
     """
     params = {
         'api_key': key,
         'q': keyword,
-        'page': page,
-        'num': 10,
+        'max_page': max_page,
+        'num': 10,                 # per-page cap; Google returns <=10 anyway
         'output': 'json',
         'google_domain': 'google.com',
         'gl': 'us',
@@ -70,7 +63,7 @@ def _get_page(keyword, page, key):
 
     for attempt in range(1, MAX_ATTEMPTS + 1):
         try:
-            req = urllib.request.Request(url, headers={'User-Agent': 'SERP-Dashboard/1.0'})
+            req = urllib.request.Request(url, headers={'User-Agent': 'SERP-Dashboard/2.0'})
             with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT) as resp:
                 data = json.loads(resp.read().decode('utf-8'))
 
@@ -88,7 +81,7 @@ def _get_page(keyword, page, key):
         except urllib.error.HTTPError as e:
             last_err = f'HTTP {e.code}'
             if e.code not in RETRY_STATUSES:
-                raise FetchError(f'page {page}: HTTP {e.code}') from e
+                raise FetchError(f'HTTP {e.code}') from e
         except Exception as e:
             last_err = str(e) or e.__class__.__name__
 
@@ -96,7 +89,7 @@ def _get_page(keyword, page, key):
             # Exponential backoff with jitter to avoid hammering a throttled API.
             time.sleep((2 ** (attempt - 1)) + random.uniform(0, 0.4))
 
-    raise FetchError(f'page {page} failed after {MAX_ATTEMPTS} attempts: {last_err}')
+    raise FetchError(f'fetch failed after {MAX_ATTEMPTS} attempts: {last_err}')
 
 
 def fetch_keyword(keyword, week_date_str, db_path, api_key=None):
@@ -104,41 +97,39 @@ def fetch_keyword(keyword, week_date_str, db_path, api_key=None):
     if not key:
         raise ValueError('SCALESERP_API_KEY environment variable not set')
 
+    organic = _fetch_serp(keyword, key, PAGES_TO_FETCH)
+
     all_results = []
     seen_urls = set()
-    global_pos = 0
-    consecutive_empty = 0
 
-    for page in range(1, PAGES_TO_FETCH + 1):
-        if page > 1:
-            time.sleep(REQUEST_SPACING)
+    for result in organic:
+        link = (result.get('link') or '').strip()
+        if not link:
+            continue
+        # Pages can overlap; keep the first (highest-ranked) occurrence of a URL.
+        norm = normalize_url(link)
+        if norm in seen_urls:
+            continue
+        seen_urls.add(norm)
 
-        organic = _get_page(keyword, page, key)
+        # Trust ScaleSERP's own numbering. Fall back defensively only if a
+        # result is missing it (older responses / edge cases).
+        position    = result.get('position_overall')
+        google_page = result.get('page')
+        if position is None:
+            position = len(all_results) + 1
+        if google_page is None:
+            google_page = -(-position // 10)   # ceil(position / 10)
 
-        if not organic:
-            consecutive_empty += 1
-            if consecutive_empty >= MAX_CONSECUTIVE_EMPTY:
-                break  # results have genuinely dried up
-            continue   # a single empty page proves nothing - keep going
-        consecutive_empty = 0
-
-        for result in organic:
-            link = (result.get('link') or '').strip()
-            if not link:
-                continue
-            # Pages overlap (measured 33 raw results -> 31 unique), so keep the
-            # first (highest-ranked) occurrence of each URL.
-            norm = normalize_url(link)
-            if norm in seen_urls:
-                continue
-            seen_urls.add(norm)
-            global_pos += 1
-            all_results.append((global_pos, page, result))
+        all_results.append((position, google_page, result))
 
     # Never destroy the existing week's data on an empty fetch - a wiped row
     # set is indistinguishable from a keyword that legitimately lost rankings.
     if not all_results:
         raise FetchError(f'no organic results returned for "{keyword}" - existing data left untouched')
+
+    # Order by true absolute position so DB rows are stored top-to-bottom.
+    all_results.sort(key=lambda t: t[0])
 
     conn = sqlite3.connect(db_path)
     try:
