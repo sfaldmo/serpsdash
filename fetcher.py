@@ -42,7 +42,8 @@ DEEP_EMPTY_STOP = 2     # give up deep paging after this many consecutive emptie
 
 REQUEST_TIMEOUT = 60    # one multi-page request takes longer than a single page
 REQUEST_SPACING = 0.6   # seconds between phase-2 single-page requests
-MAX_ATTEMPTS    = 4     # initial try + 3 retries
+MAX_ATTEMPTS    = 6     # initial try + 5 retries (ScaleSERP HF-flaps in bursts)
+BACKOFF_CAP     = 8     # seconds; don't let exponential backoff run away
 RETRY_STATUSES  = {408, 429, 500, 502, 503, 504}
 
 # ScaleSERP reports failures two ways. Most are transient server-side hiccups
@@ -66,15 +67,17 @@ class FetchError(Exception):
     """Raised when a keyword could not be fetched after retries."""
 
 
-def _fetch_serp(keyword, key, max_page=None, page=None):
+def _fetch_serp(keyword, key, max_page=None, page=None, attempts=None):
     """Fetch SERP organic_results from ScaleSERP.
 
     Pass `max_page` to pull pages 1..max_page in one request (each result then
     carries a true `page` and `position_overall`); or `page` to pull a single
     page. Retries transient failures (timeouts, 429, 5xx) with exponential
-    backoff. Raises FetchError if it still cannot be fetched, so callers can
-    tell 'no more results' apart from 'the request failed'.
+    backoff, up to `attempts` tries (default MAX_ATTEMPTS). Raises FetchError if
+    it still cannot be fetched, so callers can tell 'no more results' apart from
+    'the request failed'.
     """
+    attempts = attempts or MAX_ATTEMPTS
     params = {
         'api_key': key,
         'q': keyword,
@@ -92,7 +95,7 @@ def _fetch_serp(keyword, key, max_page=None, page=None):
     url = f'{SCALESERP_ENDPOINT}?{urllib.parse.urlencode(params)}'
     last_err = None
 
-    for attempt in range(1, MAX_ATTEMPTS + 1):
+    for attempt in range(1, attempts + 1):
         try:
             req = urllib.request.Request(url, headers={'User-Agent': 'SERP-Dashboard/2.0'})
             with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT) as resp:
@@ -120,11 +123,12 @@ def _fetch_serp(keyword, key, max_page=None, page=None):
         except Exception as e:
             last_err = str(e) or e.__class__.__name__
 
-        if attempt < MAX_ATTEMPTS:
-            # Exponential backoff with jitter to avoid hammering a throttled API.
-            time.sleep((2 ** (attempt - 1)) + random.uniform(0, 0.4))
+        if attempt < attempts:
+            # Exponential backoff with jitter (capped) to avoid hammering a
+            # throttled or flapping API without waiting minutes.
+            time.sleep(min(2 ** (attempt - 1), BACKOFF_CAP) + random.uniform(0, 0.4))
 
-    raise FetchError(f'fetch failed after {MAX_ATTEMPTS} attempts: {last_err}')
+    raise FetchError(f'fetch failed after {attempts} attempts: {last_err}')
 
 
 def _collect(organic, kept, seen_urls, fallback_page):
@@ -163,11 +167,19 @@ def fetch_keyword(keyword, week_date_str, db_path, api_key=None):
     all_results = []
     seen_urls = set()
 
-    # Phase 1: pages 1..FIRST_BLOCK in one authoritative max_page request.
-    organic = _fetch_serp(keyword, key, max_page=FIRST_BLOCK)
-    _collect(organic, all_results, seen_urls, fallback_page=1)
-    # Deepest real page we actually got back (guards against a max_page request
-    # collapsing to a single page - the deep loop resumes from the next page).
+    # Phase 1: TRY to pull pages 1..FIRST_BLOCK in one max_page request. This is
+    # only an optimisation (one HTTP round-trip, plus authoritative page/position
+    # fields). ScaleSERP's max_page is intermittently unavailable and returns code
+    # HF - and when it does, single-page fetching still works fine. So attempt it
+    # once and, on any failure, fall through to the single-page loop below, which
+    # does the whole job reliably. Never let a flaky max_page fail the keyword.
+    try:
+        organic = _fetch_serp(keyword, key, max_page=FIRST_BLOCK, attempts=1)
+        _collect(organic, all_results, seen_urls, fallback_page=1)
+    except FetchError:
+        pass  # max_page unavailable; the single-page loop covers pages 1..N
+    # Deepest real page we actually got back (0 if phase 1 was skipped/failed, so
+    # the loop starts at page 1; guards against max_page collapsing to one page).
     deepest = max((gp for _, gp, _ in all_results), default=0)
 
     # Phase 2: keep pulling single pages until we hit TARGET_MIN or run dry.
@@ -175,7 +187,16 @@ def fetch_keyword(keyword, week_date_str, db_path, api_key=None):
     page = deepest + 1   # resume right after the deepest page phase 1 returned
     while len(all_results) < TARGET_MIN and page <= MAX_PAGES and consecutive_empty < DEEP_EMPTY_STOP:
         time.sleep(REQUEST_SPACING)
-        organic = _fetch_serp(keyword, key, page=page)
+        try:
+            organic = _fetch_serp(keyword, key, page=page)
+        except FetchError:
+            # A page failed even after retries (e.g. a ScaleSERP HF outage). If we
+            # already have results, keep them - a partial fetch beats losing the
+            # keyword, and a later re-fetch tops it up. If we have nothing at all,
+            # surface the real error (and leave existing data untouched below).
+            if all_results:
+                break
+            raise
         if _collect(organic, all_results, seen_urls, fallback_page=page) == 0:
             consecutive_empty += 1
         else:
