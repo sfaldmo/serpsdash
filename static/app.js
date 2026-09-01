@@ -37,6 +37,7 @@ document.addEventListener('DOMContentLoaded', () => {
       activeKeywordId   = parseInt(btn.dataset.id, 10);
       activeKeywordName = btn.dataset.name;
       document.getElementById('kw-title').textContent = activeKeywordName;
+      document.getElementById('fetch-btn').style.display = 'inline-flex';
       document.getElementById('compare-toggle-btn').style.display = 'inline-flex';
       document.getElementById('export-btn').style.display = 'inline-flex';
       loadResults();
@@ -66,8 +67,18 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
 
-  // Auto-select first keyword
-  if (firstKwBtn) firstKwBtn.click();
+  // Auto-select a keyword: after a fetch we reload the page, so return to the
+  // keyword the user just fetched rather than jumping back to the first one.
+  let kwToOpen = firstKwBtn;
+  try {
+    const saved = sessionStorage.getItem('fetchReturnKw');
+    if (saved) {
+      sessionStorage.removeItem('fetchReturnKw');
+      const match = document.querySelector(`.kw-btn[data-id="${saved}"]`);
+      if (match) kwToOpen = match;
+    }
+  } catch (_) { /* sessionStorage may be unavailable; fall back to first */ }
+  if (kwToOpen) kwToOpen.click();
 
   // Compare
   setupCompare();
@@ -75,8 +86,8 @@ document.addEventListener('DOMContentLoaded', () => {
   // Upload modal
   setupUploadModal();
 
-  // Fetch modal
-  setupFetchModal();
+  // Fetch (per-keyword, inline)
+  setupFetch();
 
   // Keyword health check
   checkKeywordHealth();
@@ -544,133 +555,89 @@ function setupUploadModal() {
 // -----------------------------------------------------------------------
 // Fetch Live Data modal
 // -----------------------------------------------------------------------
-function setupFetchModal() {
-  const overlay   = document.getElementById('fetch-modal-overlay');
-  const openBtn   = document.getElementById('fetch-btn');
-  const closeBtn  = document.getElementById('fetch-modal-close');
-  const submitBtn = document.getElementById('fetch-submit');
-  const statusEl  = document.getElementById('fetch-status');
-  const logEl     = document.getElementById('fetch-log');
-  const dateInput = document.getElementById('fetch-date');
+function setupFetch() {
+  const btn      = document.getElementById('fetch-btn');
+  const banner   = document.getElementById('fetch-error-banner');
+  const bannerTx = document.getElementById('fetch-error-text');
 
-  // Default date to today
-  dateInput.value = new Date().toISOString().slice(0, 10);
+  btn.addEventListener('click', () => {
+    if (!activeKeywordName || btn.disabled) return;
 
-  document.getElementById('fetch-kw-all').addEventListener('click', e => {
-    e.preventDefault();
-    document.querySelectorAll('.fetch-kw-cb').forEach(cb => cb.checked = true);
-  });
-  document.getElementById('fetch-kw-none').addEventListener('click', e => {
-    e.preventDefault();
-    document.querySelectorAll('.fetch-kw-cb').forEach(cb => cb.checked = false);
-  });
+    const original = btn.innerHTML;
+    const weekDate = todayLocal();
 
-  openBtn.addEventListener('click', () => {
-    overlay.classList.remove('hidden');
-    logEl.innerHTML   = '';
-    statusEl.className = '';
-    statusEl.style.display = 'none';
-    submitBtn.disabled = false;
-    submitBtn.textContent = 'Fetch Now';
+    btn.disabled  = true;
+    btn.innerHTML = '&#8635; Fetching…';
+    banner.classList.add('hidden');
 
-    // Warn if API key not configured
+    const resetBtn = () => { btn.disabled = false; btn.innerHTML = original; };
+
+    // Confirm the API key is set before spending anything.
     fetch('/api/fetch_status')
       .then(r => r.json())
       .then(d => {
         if (!d.configured) {
-          showFetchStatus('error', 'SCALESERP_API_KEY is not set. Add it as an environment variable.');
-          submitBtn.disabled = true;
+          showFetchError("SCALESERP_API_KEY is not set on the server — can't fetch.");
+          resetBtn();
+          return;
         }
-      });
+        runFetch(resetBtn);
+      })
+      .catch(() => { showFetchError('Could not reach the server.'); resetBtn(); });
   });
 
-  closeBtn.addEventListener('click',  () => overlay.classList.add('hidden'));
-  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.classList.add('hidden'); });
-
-  submitBtn.addEventListener('click', () => {
-    const weekDate = dateInput.value;
-    if (!weekDate) { showFetchStatus('error', 'Please select a week date.'); return; }
-
-    submitBtn.disabled    = true;
-    submitBtn.textContent = 'Fetching…';
-    logEl.innerHTML       = '';
-    statusEl.style.display = 'none';
-
-    const selected = Array.from(document.querySelectorAll('.fetch-kw-cb:checked')).map(cb => cb.value);
-    if (selected.length === 0) { showFetchStatus('error', 'Select at least one keyword.'); submitBtn.disabled = false; submitBtn.textContent = 'Fetch Now'; return; }
-
+  // Stream a single-keyword fetch for today's date, then reload on success so
+  // the new week appears in the selector and the fresh rows render.
+  function runFetch(resetBtn) {
     fetch('/api/fetch', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ week_date: weekDate, keywords: selected }),
+      body:    JSON.stringify({ week_date: todayLocal(), keywords: [activeKeywordName] }),
     })
     .then(resp => {
       if (!resp.ok || !resp.body) throw new Error('Bad response');
-      const reader = resp.body.getReader();
+      const reader  = resp.body.getReader();
       const decoder = new TextDecoder();
-      let buffer = '';
-      let hasErrors = false;
-      let imported = 0;
+      let buffer  = '';
+      let kwError = null;
+      let kwCount = 0;
 
-      function readChunk() {
+      (function readChunk() {
         reader.read().then(({ done, value }) => {
           if (value) buffer += decoder.decode(value, { stream: !done });
-
-          // Process all complete lines
           const lines = buffer.split('\n');
-          buffer = lines.pop(); // keep incomplete trailing line
+          buffer = lines.pop();
           lines.forEach(line => {
             if (!line.trim()) return;
             try {
               const msg = JSON.parse(line);
-              if (msg.done) {
-                imported = msg.imported;
-                return;
-              }
-              const li = document.createElement('div');
-              li.className = 'fetch-log-row';
-              if (msg.error) {
-                hasErrors = true;
-                li.innerHTML = `<span class="skip">✕</span> ${escHtml(msg.keyword)} — <em>${escHtml(msg.error)}</em>`;
-              } else {
-                li.innerHTML = `<span class="check">✓</span> ${escHtml(msg.keyword)} — ${msg.count} results`;
-              }
-              logEl.appendChild(li);
+              if (msg.done) return;
+              if (msg.error) kwError = msg.error;
+              else           kwCount = msg.count;
             } catch (_) {}
           });
 
           if (done) {
-            submitBtn.disabled    = false;
-            submitBtn.textContent = 'Fetch Now';
-            if (hasErrors) {
-              showFetchStatus('error', `Fetched ${imported} results (some keywords failed — see above).`);
-              checkKeywordHealth();
+            if (kwError) {
+              showFetchError(`Fetch failed for “${activeKeywordName}”: ${kwError}`);
+              resetBtn();
             } else {
-              showFetchStatus('success', `Successfully fetched ${imported} results. Refreshing…`);
-              setTimeout(() => { overlay.classList.add('hidden'); window.location.reload(); }, 1800);
+              document.getElementById('fetch-btn').innerHTML = `✓ ${kwCount} results`;
+              try { sessionStorage.setItem('fetchReturnKw', String(activeKeywordId)); } catch (_) {}
+              setTimeout(() => window.location.reload(), 700);
             }
           } else {
             readChunk();
           }
-        }).catch(() => {
-          showFetchStatus('error', 'Connection lost while fetching.');
-          submitBtn.disabled    = false;
-          submitBtn.textContent = 'Fetch Now';
-        });
-      }
-      readChunk();
+        }).catch(() => { showFetchError('Connection lost while fetching.'); resetBtn(); });
+      })();
     })
-    .catch(() => {
-      showFetchStatus('error', 'Network error.');
-      submitBtn.disabled    = false;
-      submitBtn.textContent = 'Fetch Now';
-    });
-  });
+    .catch(() => { showFetchError('Network error while fetching.'); resetBtn(); });
+  }
 
-  function showFetchStatus(type, msg) {
-    statusEl.className    = type;
-    statusEl.textContent  = msg;
-    statusEl.style.display = 'block';
+  function showFetchError(msg) {
+    bannerTx.textContent = '⚠ ' + msg;
+    banner.classList.remove('hidden');
   }
 }
 
@@ -689,4 +656,11 @@ function escHtml(str) {
 function truncate(str, max) {
   if (!str) return '';
   return str.length > max ? str.slice(0, max) + '…' : str;
+}
+
+// Today's date as YYYY-MM-DD in the viewer's local timezone (not UTC, which can
+// roll to the next day in the evening for US timezones).
+function todayLocal() {
+  const d = new Date();
+  return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
 }

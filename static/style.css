@@ -139,6 +139,21 @@ body { display: flex; }
 }
 .btn-fetch:hover { background: #81c784; }
 
+/* Inline (topbar) fetch button — fetches the currently selected keyword */
+.btn-fetch-inline {
+  padding: 9px 16px;
+  background: #66bb6a;
+  color: #fff;
+  border: 2px solid #66bb6a;
+  border-radius: 6px;
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all .15s;
+}
+.btn-fetch-inline:hover { background: #81c784; border-color: #81c784; }
+.btn-fetch-inline:disabled { background: #a5d6a7; border-color: #a5d6a7; cursor: progress; }
+
 /* Fetch keyword selector */
 #fetch-keyword-select {
   margin: 10px 0 8px;
