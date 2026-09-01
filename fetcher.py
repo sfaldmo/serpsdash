@@ -45,6 +45,22 @@ REQUEST_SPACING = 0.6   # seconds between phase-2 single-page requests
 MAX_ATTEMPTS    = 4     # initial try + 3 retries
 RETRY_STATUSES  = {408, 429, 500, 502, 503, 504}
 
+# ScaleSERP reports failures two ways. Most are transient server-side hiccups
+# (e.g. code HF: "unable to fulfil your request at this time, please try again
+# later ... you have not been charged") and must be retried, not fatal. Only a
+# few - out of credits, bad API key, a malformed query - will never succeed on
+# retry, so we fail fast ONLY when the message matches one of these markers and
+# retry everything else.
+PERMANENT_ERROR_MARKERS = (
+    'credit', 'not enough', 'api key', 'api_key', 'invalid api',
+    'unauthorized', 'forbidden', 'subscription', 'suspend', 'disabled',
+)
+
+
+def _is_permanent_error(msg):
+    m = (msg or '').lower()
+    return any(marker in m for marker in PERMANENT_ERROR_MARKERS)
+
 
 class FetchError(Exception):
     """Raised when a keyword could not be fetched after retries."""
@@ -86,10 +102,14 @@ def _fetch_serp(keyword, key, max_page=None, page=None):
             info = data.get('request_info') or {}
             if info.get('success') is False:
                 msg = info.get('message', 'unknown ScaleSERP error')
-                # Credit/auth problems will never succeed on retry - fail fast.
-                raise FetchError(f'ScaleSERP rejected the request: {msg}')
-
-            return data.get('organic_results', []) or []
+                if _is_permanent_error(msg):
+                    # Credits/auth/bad-query: retrying cannot help - fail fast.
+                    raise FetchError(f'ScaleSERP rejected the request: {msg}')
+                # Transient server-side failure (e.g. HF). Fall through to the
+                # backoff below and retry like any other transient error.
+                last_err = f'ScaleSERP: {msg}'
+            else:
+                return data.get('organic_results', []) or []
 
         except FetchError:
             raise
