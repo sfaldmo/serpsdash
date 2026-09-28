@@ -3,6 +3,7 @@ import sqlite3
 import os
 import json
 import functools
+import traceback
 from datetime import datetime
 
 app = Flask(__name__)
@@ -602,6 +603,10 @@ def api_fetch():
     force    = bool(data.get('force'))        # skip the week-over-week sanity check
 
     def generate():
+        # Send a line straight away so headers go out before the slow part: a
+        # failure mid-fetch then shows up as a truncated stream the page can
+        # report, instead of gunicorn's bare "Internal Server Error".
+        yield json.dumps({'started': True}) + '\n'
         from fetcher import KEYWORDS, fetch_keyword, SuspiciousFetchError
         kw_list = [k for k in KEYWORDS if (selected is None or k in selected)]
         total = 0
@@ -613,7 +618,13 @@ def api_fetch():
             except SuspiciousFetchError as e:
                 yield json.dumps({'keyword': kw, 'count': 0, 'error': str(e), 'suspicious': True}) + '\n'
             except Exception as e:
-                yield json.dumps({'keyword': kw, 'count': 0, 'error': str(e)}) + '\n'
+                traceback.print_exc()
+                yield json.dumps({'keyword': kw, 'count': 0, 'error': f'{type(e).__name__}: {e}'}) + '\n'
+            except BaseException:
+                # Worker shutdown/abort (SystemExit etc.) - log what and where.
+                print(f'[api_fetch] fetch of "{kw}" aborted:', flush=True)
+                traceback.print_exc()
+                raise
         yield json.dumps({'done': True, 'imported': total}) + '\n'
 
     return Response(stream_with_context(generate()), mimetype='application/x-ndjson')

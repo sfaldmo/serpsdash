@@ -597,13 +597,18 @@ function setupFetch() {
       body:    JSON.stringify({ week_date: todayLocal(), keywords: [activeKeywordName], force }),
     })
     .then(resp => {
-      if (!resp.ok || !resp.body) throw new Error('Bad response');
+      if (!resp.ok || !resp.body) {
+        showFetchError(`Server error (HTTP ${resp.status}) while fetching “${activeKeywordName}”. Try again in a minute.`);
+        resetBtn();
+        return;
+      }
       const reader  = resp.body.getReader();
       const decoder = new TextDecoder();
       let buffer  = '';
       let kwError = null;
       let kwSuspicious = false;
       let kwCount = 0;
+      let sawDone = false;
 
       (function readChunk() {
         reader.read().then(({ done, value }) => {
@@ -614,14 +619,18 @@ function setupFetch() {
             if (!line.trim()) return;
             try {
               const msg = JSON.parse(line);
-              if (msg.done) return;
+              if (msg.done) { sawDone = true; return; }
+              if (msg.started) return;
               if (msg.error) { kwError = msg.error; kwSuspicious = !!msg.suspicious; }
               else           kwCount = msg.count;
             } catch (_) {}
           });
 
           if (done) {
-            if (kwError && kwSuspicious && !force &&
+            if (!sawDone && !kwError) {
+              showFetchError(`The server stopped partway through fetching “${activeKeywordName}”. Nothing was changed — try again.`);
+              resetBtn();
+            } else if (kwError && kwSuspicious && !force &&
                 confirm(`${kwError}\n\nSave these results anyway?`)) {
               runFetch(resetBtn, true);
             } else if (kwError) {
