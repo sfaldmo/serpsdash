@@ -52,6 +52,19 @@ RETRY_STATUSES  = {408, 429, 500, 502, 503, 504}
 # few - out of credits, bad API key, a malformed query - will never succeed on
 # retry, so we fail fast ONLY when the message matches one of these markers and
 # retry everything else.
+# Sanity check against last week. ScaleSERP occasionally hands back deep or
+# off-topic pages labelled as page 1 (e.g. 2026-09-28: "The Wellness Company"
+# page 1 was UK company filings and Chinese app-store listings, and Melaleuca
+# Reviews' "page 1" was URLs that had ranked #19-#62). Real week-over-week
+# movement never looks like that: across Jul-Sep 2026 at least 4 of every
+# keyword's top 10 were in the previous week's top 30, while the bad fetches
+# scored 0. So if fewer than SANITY_MIN_OVERLAP carry over, refetch, and if it
+# is still off, refuse to save rather than silently storing junk.
+SANITY_TOP          = 10    # fresh results compared
+SANITY_PREV_DEPTH   = 30    # ...against this many of last week's results
+SANITY_MIN_OVERLAP  = 3
+SANITY_ATTEMPTS     = 2     # full refetches before giving up
+
 PERMANENT_ERROR_MARKERS = (
     'credit', 'not enough', 'api key', 'api_key', 'invalid api',
     'unauthorized', 'forbidden', 'subscription', 'suspend', 'disabled',
@@ -65,6 +78,10 @@ def _is_permanent_error(msg):
 
 class FetchError(Exception):
     """Raised when a keyword could not be fetched after retries."""
+
+
+class SuspiciousFetchError(FetchError):
+    """Raised when fetched results look nothing like the previous week's."""
 
 
 def _fetch_serp(keyword, key, max_page=None, page=None, attempts=None):
@@ -159,11 +176,34 @@ def _collect(organic, kept, seen_urls, fallback_page):
     return added
 
 
-def fetch_keyword(keyword, week_date_str, db_path, api_key=None):
-    key = api_key or os.environ.get('SCALESERP_API_KEY', '')
-    if not key:
-        raise ValueError('SCALESERP_API_KEY environment variable not set')
+def _previous_urls(db_path, keyword, week_date_str):
+    """Normalized top-SANITY_PREV_DEPTH URLs from the most recent earlier week
+    that has results for this keyword, or None if there is no such week."""
+    conn = sqlite3.connect(db_path)
+    try:
+        rows = conn.execute('''
+            SELECT sr.url FROM serp_results sr
+            JOIN   weeks w    ON sr.week_id = w.id
+            JOIN   keywords k ON sr.keyword_id = k.id
+            WHERE  k.name = ? AND w.week_date = (
+                SELECT MAX(w2.week_date) FROM serp_results sr2
+                JOIN   weeks w2 ON sr2.week_id = w2.id
+                WHERE  sr2.keyword_id = k.id AND w2.week_date < ?)
+            ORDER  BY sr.position LIMIT ?
+        ''', (keyword, week_date_str, SANITY_PREV_DEPTH)).fetchall()
+    finally:
+        conn.close()
+    return {normalize_url(r[0]) for r in rows} or None
 
+
+def _overlap(all_results, prev_urls):
+    top = [normalize_url((res.get('link') or '').strip()) for _, _, res in all_results[:SANITY_TOP]]
+    return sum(u in prev_urls for u in top)
+
+
+def _collect_keyword(keyword, key):
+    """Pull up to MAX_PAGES of organic results for one keyword. Returns a list
+    of (position, google_page, result), densely ranked from 1."""
     all_results = []
     seen_urls = set()
 
@@ -211,7 +251,32 @@ def fetch_keyword(keyword, week_date_str, db_path, api_key=None):
     # Order by (page, position) so rows read top-to-bottom, then renumber
     # densely: position becomes the overall rank across everything we kept.
     all_results.sort(key=lambda t: (t[1], t[0] if t[0] is not None else 1e9))
-    all_results = [(i + 1, gp, res) for i, (_, gp, res) in enumerate(all_results)]
+    return [(i + 1, gp, res) for i, (_, gp, res) in enumerate(all_results)]
+
+
+def fetch_keyword(keyword, week_date_str, db_path, api_key=None, force=False):
+    """Fetch and store one keyword. Unless `force`, results that fail the
+    week-over-week sanity check are refetched and, failing that, rejected with
+    SuspiciousFetchError (existing data left untouched)."""
+    key = api_key or os.environ.get('SCALESERP_API_KEY', '')
+    if not key:
+        raise ValueError('SCALESERP_API_KEY environment variable not set')
+
+    prev_urls = None if force else _previous_urls(db_path, keyword, week_date_str)
+    for attempt in range(1, SANITY_ATTEMPTS + 1):
+        all_results = _collect_keyword(keyword, key)
+        if prev_urls is None:
+            break
+        overlap = _overlap(all_results, prev_urls)
+        if overlap >= SANITY_MIN_OVERLAP:
+            break
+        if attempt == SANITY_ATTEMPTS:
+            raise SuspiciousFetchError(
+                f'only {overlap} of the top {SANITY_TOP} results for "{keyword}" were in last '
+                f"week's top {SANITY_PREV_DEPTH} (normally 4+) - ScaleSERP likely returned bad "
+                f'pages. Existing data left untouched; refetch later, or force-save if the SERP '
+                f'really did change.'
+            )
 
     conn = sqlite3.connect(db_path)
     try:

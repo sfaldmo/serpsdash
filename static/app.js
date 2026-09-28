@@ -581,18 +581,20 @@ function setupFetch() {
           resetBtn();
           return;
         }
-        runFetch(resetBtn);
+        runFetch(resetBtn, false);
       })
       .catch(() => { showFetchError('Could not reach the server.'); resetBtn(); });
   });
 
   // Stream a single-keyword fetch for today's date, then reload on success so
   // the new week appears in the selector and the fresh rows render.
-  function runFetch(resetBtn) {
+  // `force` skips the server's week-over-week sanity check; it's only sent after
+  // the user confirms a result set that looked nothing like last week's.
+  function runFetch(resetBtn, force) {
     fetch('/api/fetch', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ week_date: todayLocal(), keywords: [activeKeywordName] }),
+      body:    JSON.stringify({ week_date: todayLocal(), keywords: [activeKeywordName], force }),
     })
     .then(resp => {
       if (!resp.ok || !resp.body) throw new Error('Bad response');
@@ -600,6 +602,7 @@ function setupFetch() {
       const decoder = new TextDecoder();
       let buffer  = '';
       let kwError = null;
+      let kwSuspicious = false;
       let kwCount = 0;
 
       (function readChunk() {
@@ -612,13 +615,16 @@ function setupFetch() {
             try {
               const msg = JSON.parse(line);
               if (msg.done) return;
-              if (msg.error) kwError = msg.error;
+              if (msg.error) { kwError = msg.error; kwSuspicious = !!msg.suspicious; }
               else           kwCount = msg.count;
             } catch (_) {}
           });
 
           if (done) {
-            if (kwError) {
+            if (kwError && kwSuspicious && !force &&
+                confirm(`${kwError}\n\nSave these results anyway?`)) {
+              runFetch(resetBtn, true);
+            } else if (kwError) {
               showFetchError(`Fetch failed for “${activeKeywordName}”: ${kwError}`);
               resetBtn();
             } else {

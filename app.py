@@ -599,16 +599,19 @@ def api_fetch():
         return jsonify({'error': 'SCALESERP_API_KEY environment variable is not set'}), 500
 
     selected = data.get('keywords') or None  # list of keyword strings, or None = all
+    force    = bool(data.get('force'))        # skip the week-over-week sanity check
 
     def generate():
-        from fetcher import KEYWORDS, fetch_keyword
+        from fetcher import KEYWORDS, fetch_keyword, SuspiciousFetchError
         kw_list = [k for k in KEYWORDS if (selected is None or k in selected)]
         total = 0
         for kw in kw_list:
             try:
-                count = fetch_keyword(kw, week_date, DB_PATH, api_key)
+                count = fetch_keyword(kw, week_date, DB_PATH, api_key, force=force)
                 total += count
                 yield json.dumps({'keyword': kw, 'count': count, 'error': None}) + '\n'
+            except SuspiciousFetchError as e:
+                yield json.dumps({'keyword': kw, 'count': 0, 'error': str(e), 'suspicious': True}) + '\n'
             except Exception as e:
                 yield json.dumps({'keyword': kw, 'count': 0, 'error': str(e)}) + '\n'
         yield json.dumps({'done': True, 'imported': total}) + '\n'
