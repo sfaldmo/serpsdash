@@ -4,6 +4,7 @@ import os
 import json
 import functools
 import traceback
+import threading
 from datetime import datetime
 
 app = Flask(__name__)
@@ -580,6 +581,9 @@ def api_keyword_health():
     })
 
 
+HEARTBEAT_SECS = 10
+
+
 @app.route('/api/fetch', methods=['POST'])
 def api_fetch():
     """Stream fetch progress as newline-delimited JSON.
@@ -612,7 +616,25 @@ def api_fetch():
         total = 0
         for kw in kw_list:
             try:
-                count = fetch_keyword(kw, week_date, DB_PATH, api_key, force=force)
+                # Run the fetch in a thread and send a heartbeat line every
+                # HEARTBEAT_SECS: a keyword can take minutes (ScaleSERP retries,
+                # the sanity refetch) and Railway's proxy drops a response that
+                # sends nothing for ~120s.
+                box = {}
+                def work(kw=kw):
+                    try:
+                        box['count'] = fetch_keyword(kw, week_date, DB_PATH, api_key, force=force)
+                    except BaseException as e:
+                        box['error'] = e
+                t = threading.Thread(target=work, daemon=True)
+                t.start()
+                while t.is_alive():
+                    t.join(HEARTBEAT_SECS)
+                    if t.is_alive():
+                        yield json.dumps({'heartbeat': kw}) + '\n'
+                if 'error' in box:
+                    raise box['error']
+                count = box['count']
                 total += count
                 yield json.dumps({'keyword': kw, 'count': count, 'error': None}) + '\n'
             except SuspiciousFetchError as e:

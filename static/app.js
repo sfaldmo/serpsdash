@@ -620,7 +620,7 @@ function setupFetch() {
             try {
               const msg = JSON.parse(line);
               if (msg.done) { sawDone = true; return; }
-              if (msg.started) return;
+              if (msg.started || msg.heartbeat) return;
               if (msg.error) { kwError = msg.error; kwSuspicious = !!msg.suspicious; }
               else           kwCount = msg.count;
             } catch (_) {}
