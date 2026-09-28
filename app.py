@@ -5,6 +5,8 @@ import json
 import functools
 import traceback
 import threading
+import time
+import uuid
 from datetime import datetime
 
 app = Flask(__name__)
@@ -582,74 +584,135 @@ def api_keyword_health():
 
 
 HEARTBEAT_SECS = 10
+JOB_TTL_SECS   = 3600
 
 
-@app.route('/api/fetch', methods=['POST'])
-def api_fetch():
-    """Stream fetch progress as newline-delimited JSON.
-    Each line is {"keyword":..., "count":..., "error":...} or {"done":true, "imported":N}.
-    """
+def _fetch_events(kw_list, week_date, api_key, force):
+    """Fetch each keyword, yielding progress dicts: {'keyword', 'count', 'error'
+    [, 'suspicious']} per keyword, {'heartbeat': kw} every HEARTBEAT_SECS while
+    one is in flight, then {'done': True, 'imported': N}."""
+    from fetcher import fetch_keyword, SuspiciousFetchError
+    total = 0
+    for kw in kw_list:
+        try:
+            # Run the fetch in a thread so we can report liveness while a slow
+            # keyword (ScaleSERP retry backoff, the sanity refetch) works.
+            box = {}
+            def work(kw=kw):
+                try:
+                    box['count'] = fetch_keyword(kw, week_date, DB_PATH, api_key, force=force)
+                except BaseException as e:
+                    box['error'] = e
+            t = threading.Thread(target=work, daemon=True)
+            t.start()
+            while t.is_alive():
+                t.join(HEARTBEAT_SECS)
+                if t.is_alive():
+                    yield {'heartbeat': kw}
+            if 'error' in box:
+                raise box['error']
+            total += box['count']
+            yield {'keyword': kw, 'count': box['count'], 'error': None}
+        except SuspiciousFetchError as e:
+            yield {'keyword': kw, 'count': 0, 'error': str(e), 'suspicious': True}
+        except Exception as e:
+            traceback.print_exc()
+            yield {'keyword': kw, 'count': 0, 'error': f'{type(e).__name__}: {e}'}
+        except BaseException:
+            # Worker shutdown/abort (SystemExit etc.) - log what and where.
+            print(f'[fetch] "{kw}" aborted:', flush=True)
+            traceback.print_exc()
+            raise
+    yield {'done': True, 'imported': total}
+
+
+def _parse_fetch_request():
+    """Validate a fetch request body. Returns (args, None) or (None, error response)."""
     data      = request.get_json(force=True)
     week_date = data.get('week_date', '').strip()
 
     if not week_date:
-        return jsonify({'error': 'week_date required'}), 400
+        return None, (jsonify({'error': 'week_date required'}), 400)
     try:
         datetime.strptime(week_date, '%Y-%m-%d')
     except ValueError:
-        return jsonify({'error': 'week_date must be YYYY-MM-DD'}), 400
+        return None, (jsonify({'error': 'week_date must be YYYY-MM-DD'}), 400)
 
     api_key = os.environ.get('SCALESERP_API_KEY', '')
     if not api_key:
-        return jsonify({'error': 'SCALESERP_API_KEY environment variable is not set'}), 500
+        return None, (jsonify({'error': 'SCALESERP_API_KEY environment variable is not set'}), 500)
 
+    from fetcher import KEYWORDS
     selected = data.get('keywords') or None  # list of keyword strings, or None = all
+    kw_list  = [k for k in KEYWORDS if (selected is None or k in selected)]
     force    = bool(data.get('force'))        # skip the week-over-week sanity check
+    return (kw_list, week_date, api_key, force), None
+
+
+@app.route('/api/fetch', methods=['POST'])
+def api_fetch():
+    """Stream fetch progress as newline-delimited JSON (see _fetch_events).
+
+    Any single request is cut off at ~120s between here and the client, and a
+    full fetch takes longer than that - prefer /api/fetch_job, which runs in the
+    background and is polled.
+    """
+    args, err = _parse_fetch_request()
+    if err:
+        return err
 
     def generate():
-        # Send a line straight away so headers go out before the slow part: a
-        # failure mid-fetch then shows up as a truncated stream the page can
-        # report, instead of gunicorn's bare "Internal Server Error".
+        # Send a line straight away so headers go out before the slow part.
         yield json.dumps({'started': True}) + '\n'
-        from fetcher import KEYWORDS, fetch_keyword, SuspiciousFetchError
-        kw_list = [k for k in KEYWORDS if (selected is None or k in selected)]
-        total = 0
-        for kw in kw_list:
-            try:
-                # Run the fetch in a thread and send a heartbeat line every
-                # HEARTBEAT_SECS: a keyword can take minutes (ScaleSERP retries,
-                # the sanity refetch) and Railway's proxy drops a response that
-                # sends nothing for ~120s.
-                box = {}
-                def work(kw=kw):
-                    try:
-                        box['count'] = fetch_keyword(kw, week_date, DB_PATH, api_key, force=force)
-                    except BaseException as e:
-                        box['error'] = e
-                t = threading.Thread(target=work, daemon=True)
-                t.start()
-                while t.is_alive():
-                    t.join(HEARTBEAT_SECS)
-                    if t.is_alive():
-                        yield json.dumps({'heartbeat': kw}) + '\n'
-                if 'error' in box:
-                    raise box['error']
-                count = box['count']
-                total += count
-                yield json.dumps({'keyword': kw, 'count': count, 'error': None}) + '\n'
-            except SuspiciousFetchError as e:
-                yield json.dumps({'keyword': kw, 'count': 0, 'error': str(e), 'suspicious': True}) + '\n'
-            except Exception as e:
-                traceback.print_exc()
-                yield json.dumps({'keyword': kw, 'count': 0, 'error': f'{type(e).__name__}: {e}'}) + '\n'
-            except BaseException:
-                # Worker shutdown/abort (SystemExit etc.) - log what and where.
-                print(f'[api_fetch] fetch of "{kw}" aborted:', flush=True)
-                traceback.print_exc()
-                raise
-        yield json.dumps({'done': True, 'imported': total}) + '\n'
+        for event in _fetch_events(*args):
+            yield json.dumps(event) + '\n'
 
     return Response(stream_with_context(generate()), mimetype='application/x-ndjson')
+
+
+# Background fetch jobs. In-memory is fine: the Procfile runs a single worker.
+_jobs      = {}
+_jobs_lock = threading.Lock()
+
+
+@app.route('/api/fetch_job', methods=['POST'])
+def api_fetch_job_start():
+    """Start a fetch in the background and return its id immediately. Poll
+    GET /api/fetch_job/<id>?since=N for progress; no request runs long enough
+    to hit the ~120s cutoff."""
+    args, err = _parse_fetch_request()
+    if err:
+        return err
+
+    job_id = uuid.uuid4().hex
+    job    = {'events': [], 'finished': False, 'created': time.time()}
+    with _jobs_lock:
+        for old_id in [j for j, v in _jobs.items() if time.time() - v['created'] > JOB_TTL_SECS]:
+            del _jobs[old_id]
+        _jobs[job_id] = job
+
+    def run():
+        try:
+            for event in _fetch_events(*args):
+                if 'heartbeat' not in event:
+                    job['events'].append(event)
+        except BaseException as e:
+            job['events'].append({'fatal': f'{type(e).__name__}: {e}'})
+        finally:
+            job['finished'] = True
+
+    threading.Thread(target=run, daemon=True).start()
+    return jsonify({'job_id': job_id})
+
+
+@app.route('/api/fetch_job/<job_id>')
+def api_fetch_job_status(job_id):
+    """Return events after index `since`, plus whether the job has finished."""
+    job = _jobs.get(job_id)
+    if not job:
+        return jsonify({'error': 'unknown job (the server may have restarted)'}), 404
+    since = request.args.get('since', 0, type=int)
+    return jsonify({'events': job['events'][since:], 'finished': job['finished']})
 
 
 @app.route('/api/fetch_status')

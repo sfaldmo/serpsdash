@@ -586,68 +586,66 @@ function setupFetch() {
       .catch(() => { showFetchError('Could not reach the server.'); resetBtn(); });
   });
 
-  // Stream a single-keyword fetch for today's date, then reload on success so
-  // the new week appears in the selector and the fresh rows render.
+  // Fetch a single keyword for today's date as a background job, polling for
+  // the result (a single request that runs past ~120s gets cut off, and a slow
+  // keyword can take longer), then reload on success so the new week appears in
+  // the selector and the fresh rows render.
   // `force` skips the server's week-over-week sanity check; it's only sent after
   // the user confirms a result set that looked nothing like last week's.
+  const POLL_MS = 2000;
+
   function runFetch(resetBtn, force) {
-    fetch('/api/fetch', {
+    fetch('/api/fetch_job', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify({ week_date: todayLocal(), keywords: [activeKeywordName], force }),
     })
-    .then(resp => {
-      if (!resp.ok || !resp.body) {
-        showFetchError(`Server error (HTTP ${resp.status}) while fetching “${activeKeywordName}”. Try again in a minute.`);
-        resetBtn();
-        return;
-      }
-      const reader  = resp.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer  = '';
-      let kwError = null;
-      let kwSuspicious = false;
-      let kwCount = 0;
-      let sawDone = false;
+    .then(resp => resp.ok ? resp.json() : Promise.reject(`HTTP ${resp.status}`))
+    .then(({ job_id }) => pollJob(job_id, resetBtn, force))
+    .catch(err => {
+      showFetchError(`Couldn't start the fetch for “${activeKeywordName}” (${err}).`);
+      resetBtn();
+    });
+  }
 
-      (function readChunk() {
-        reader.read().then(({ done, value }) => {
-          if (value) buffer += decoder.decode(value, { stream: !done });
-          const lines = buffer.split('\n');
-          buffer = lines.pop();
-          lines.forEach(line => {
-            if (!line.trim()) return;
-            try {
-              const msg = JSON.parse(line);
-              if (msg.done) { sawDone = true; return; }
-              if (msg.started || msg.heartbeat) return;
-              if (msg.error) { kwError = msg.error; kwSuspicious = !!msg.suspicious; }
-              else           kwCount = msg.count;
-            } catch (_) {}
+  function pollJob(jobId, resetBtn, force) {
+    let seen = 0;
+    let kwError = null;
+    let kwSuspicious = false;
+    let kwCount = 0;
+    let misses = 0;   // tolerate a few dropped polls before giving up
+
+    (function poll() {
+      fetch(`/api/fetch_job/${jobId}?since=${seen}`)
+        .then(resp => resp.ok ? resp.json() : Promise.reject(`HTTP ${resp.status}`))
+        .then(({ events, finished }) => {
+          misses = 0;
+          seen += events.length;
+          events.forEach(msg => {
+            if (msg.fatal)        kwError = `server error: ${msg.fatal}`;
+            else if (msg.error) { kwError = msg.error; kwSuspicious = !!msg.suspicious; }
+            else if (!msg.done)   kwCount = msg.count;
           });
+          if (!finished) { setTimeout(poll, POLL_MS); return; }
 
-          if (done) {
-            if (!sawDone && !kwError) {
-              showFetchError(`The server stopped partway through fetching “${activeKeywordName}”. Nothing was changed — try again.`);
-              resetBtn();
-            } else if (kwError && kwSuspicious && !force &&
-                confirm(`${kwError}\n\nSave these results anyway?`)) {
-              runFetch(resetBtn, true);
-            } else if (kwError) {
-              showFetchError(`Fetch failed for “${activeKeywordName}”: ${kwError}`);
-              resetBtn();
-            } else {
-              document.getElementById('fetch-btn').innerHTML = `✓ ${kwCount} results`;
-              try { sessionStorage.setItem('fetchReturnKw', String(activeKeywordId)); } catch (_) {}
-              setTimeout(() => window.location.reload(), 700);
-            }
+          if (kwError && kwSuspicious && !force &&
+              confirm(`${kwError}\n\nSave these results anyway?`)) {
+            runFetch(resetBtn, true);
+          } else if (kwError) {
+            showFetchError(`Fetch failed for “${activeKeywordName}”: ${kwError}`);
+            resetBtn();
           } else {
-            readChunk();
+            document.getElementById('fetch-btn').innerHTML = `✓ ${kwCount} results`;
+            try { sessionStorage.setItem('fetchReturnKw', String(activeKeywordId)); } catch (_) {}
+            setTimeout(() => window.location.reload(), 700);
           }
-        }).catch(() => { showFetchError('Connection lost while fetching.'); resetBtn(); });
-      })();
-    })
-    .catch(() => { showFetchError('Network error while fetching.'); resetBtn(); });
+        })
+        .catch(err => {
+          if (++misses < 5) { setTimeout(poll, POLL_MS); return; }
+          showFetchError(`Lost track of the fetch for “${activeKeywordName}” (${err}). It may still finish — reload in a minute to check.`);
+          resetBtn();
+        });
+    })();
   }
 
   function showFetchError(msg) {
