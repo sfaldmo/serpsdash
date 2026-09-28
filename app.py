@@ -715,6 +715,17 @@ def api_fetch_job_status(job_id):
     return jsonify({'events': job['events'][since:], 'finished': job['finished']})
 
 
+_BOOTED = time.time()
+
+
+@app.route('/api/health')
+def api_health():
+    """Process identity + uptime, to spot restarts or multiple replicas."""
+    return jsonify({'pid': os.getpid(), 'uptime_s': round(time.time() - _BOOTED),
+                    'replica': os.environ.get('RAILWAY_REPLICA_ID', ''),
+                    'jobs': len(_jobs)})
+
+
 @app.route('/api/fetch_status')
 def api_fetch_status():
     """Check whether SCALESERP_API_KEY is configured."""
