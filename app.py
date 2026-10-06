@@ -232,11 +232,14 @@ def api_results():
     }
 
     # Previous week
+    # Most recent earlier week that actually has results for this keyword, so a
+    # stray partial week doesn't turn every row into "new"/"returned".
     prev = conn.execute('''
         SELECT id FROM weeks
         WHERE  week_date < (SELECT week_date FROM weeks WHERE id = ?)
+          AND  id IN (SELECT week_id FROM serp_results WHERE keyword_id = ?)
         ORDER  BY week_date DESC LIMIT 1
-    ''', (week_id,)).fetchone()
+    ''', (week_id, keyword_id)).fetchone()
 
     prev_pos = {}
     if prev:
@@ -803,8 +806,9 @@ def api_stats():
     prev = conn.execute('''
         SELECT id FROM weeks
         WHERE week_date < (SELECT week_date FROM weeks WHERE id=?)
+          AND id IN (SELECT week_id FROM serp_results WHERE keyword_id=?)
         ORDER BY week_date DESC LIMIT 1
-    ''', (week_id,)).fetchone()
+    ''', (week_id, keyword_id)).fetchone()
 
     new_count = 0
     curr_week_date_row = conn.execute(
@@ -977,8 +981,10 @@ def api_export():
         # Previous week
         prev = conn.execute('''
             SELECT id FROM weeks
-            WHERE week_date < ? ORDER BY week_date DESC LIMIT 1
-        ''', (week_date_str,)).fetchone()
+            WHERE week_date < ?
+              AND id IN (SELECT week_id FROM serp_results WHERE keyword_id=?)
+            ORDER BY week_date DESC LIMIT 1
+        ''', (week_date_str, kw['id'])).fetchone()
 
         prev_pos = {}
         if prev:
