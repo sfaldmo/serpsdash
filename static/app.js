@@ -117,16 +117,6 @@ function checkKeywordHealth() {
           btn.appendChild(badge);
         }
       });
-      // Show banner if any keywords are missing
-      const banner = document.getElementById('fetch-error-banner');
-      if (missing.length) {
-        const names = missing.map(m => m.name).join(', ');
-        document.getElementById('fetch-error-text').textContent =
-          `⚠ No data for latest week (${data.week_date}): ${names}. Run a fetch to update.`;
-        banner.classList.remove('hidden');
-      } else {
-        banner.classList.add('hidden');
-      }
     })
     .catch(() => {}); // fail silently — health check is non-critical
 }
@@ -635,9 +625,9 @@ function setupFetch() {
             showFetchError(`Fetch failed for “${activeKeywordName}”: ${kwError}`);
             resetBtn();
           } else {
-            document.getElementById('fetch-btn').innerHTML = `✓ ${kwCount} results`;
+            document.getElementById('fetch-btn').innerHTML = '✓ Fetch successful';
             try { sessionStorage.setItem('fetchReturnKw', String(activeKeywordId)); } catch (_) {}
-            setTimeout(() => window.location.reload(), 700);
+            setTimeout(() => window.location.reload(), 1500);
           }
         })
         .catch(err => {
