@@ -749,6 +749,8 @@ def api_debug_serp():
     for name in ('page', 'max_page'):
         if request.args.get(name, type=int):
             params[name] = request.args.get(name, type=int)
+    if request.args.get('location'):
+        params['location'] = request.args['location']
     url = f'{SCALESERP_ENDPOINT}?{urllib.parse.urlencode(params)}'
     with urllib.request.urlopen(url, timeout=90) as resp:
         data = json.loads(resp.read().decode('utf-8'))
