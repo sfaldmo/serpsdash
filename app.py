@@ -375,6 +375,21 @@ def api_weeks():
     return jsonify([{'id': w['id'], 'week_date': str(w['week_date'])} for w in weeks])
 
 
+@app.route('/api/weeks/<week_date>', methods=['DELETE'])
+def api_delete_week(week_date):
+    """Delete a week and all its results, e.g. one created by a mid-week fetch."""
+    conn = get_db()
+    week = conn.execute('SELECT id FROM weeks WHERE week_date = ?', (week_date,)).fetchone()
+    if not week:
+        conn.close()
+        return jsonify({'error': f'no week {week_date}'}), 404
+    deleted = conn.execute('DELETE FROM serp_results WHERE week_id = ?', (week['id'],)).rowcount
+    conn.execute('DELETE FROM weeks WHERE id = ?', (week['id'],))
+    conn.commit()
+    conn.close()
+    return jsonify({'week_date': week_date, 'results_deleted': deleted})
+
+
 @app.route('/api/tag', methods=['POST'])
 def api_tag():
     data      = request.get_json(force=True)
