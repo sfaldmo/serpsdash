@@ -63,7 +63,15 @@ RETRY_STATUSES  = {408, 429, 500, 502, 503, 504}
 SANITY_TOP          = 10    # fresh results compared
 SANITY_PREV_DEPTH   = 30    # ...against this many of last week's results
 SANITY_MIN_OVERLAP  = 3
-SANITY_ATTEMPTS     = 2     # full refetches before giving up
+SANITY_ATTEMPTS     = 4     # full refetches before giving up
+SANITY_ANCHOR_TOP   = 5     # last week's #1 domain must be in the new top 5
+# 2026-10-06: back-to-back identical ScaleSERP requests for "Riverbend Ranch"
+# flipped between the real SERP and an off-topic one (TN Facebook videos,
+# MapQuest WA, Reddit) about half the time, even with a fixed location; real
+# Google showed the normal SERP. The off-topic variant can still share 3 URLs
+# with last week's top 30, so also require last week's #1 domain near the top -
+# across Jul-Oct 2026 that held for every keyword except two Melaleuca Reviews
+# weeks where #1 flipped between Reddit and melaleuca.com.
 
 PERMANENT_ERROR_MARKERS = (
     'credit', 'not enough', 'api key', 'api_key', 'invalid api',
@@ -193,12 +201,23 @@ def _previous_urls(db_path, keyword, week_date_str):
         ''', (keyword, week_date_str, SANITY_PREV_DEPTH)).fetchall()
     finally:
         conn.close()
-    return {normalize_url(r[0]) for r in rows} or None
+    return [normalize_url(r[0]) for r in rows] or None
+
+
+def _domain(url):
+    return url.split('//')[-1].split('/')[0].lower().removeprefix('www.')
+
+
+def _anchor_held(all_results, prev_urls):
+    """True if last week's #1 domain is in the fresh top SANITY_ANCHOR_TOP."""
+    top = {_domain((res.get('link') or '').strip()) for _, _, res in all_results[:SANITY_ANCHOR_TOP]}
+    return _domain(prev_urls[0]) in top
 
 
 def _overlap(all_results, prev_urls):
     top = [normalize_url((res.get('link') or '').strip()) for _, _, res in all_results[:SANITY_TOP]]
-    return sum(u in prev_urls for u in top)
+    prev = set(prev_urls)
+    return sum(u in prev for u in top)
 
 
 def _collect_keyword(keyword, key, use_max_page=True):
@@ -269,20 +288,23 @@ def fetch_keyword(keyword, week_date_str, db_path, api_key=None, force=False):
 
     prev_urls = None if force else _previous_urls(db_path, keyword, week_date_str)
     for attempt in range(1, SANITY_ATTEMPTS + 1):
-        # Retries page one request at a time: a bad max_page response tends to
-        # come back bad again.
+        # Retries page one request at a time, so each is a fresh draw from
+        # ScaleSERP rather than a repeat of the same multi-page request.
         all_results = _collect_keyword(keyword, key, use_max_page=(attempt == 1))
         if prev_urls is None:
             break
         overlap = _overlap(all_results, prev_urls)
-        if overlap >= SANITY_MIN_OVERLAP:
+        anchored = _anchor_held(all_results, prev_urls)
+        if overlap >= SANITY_MIN_OVERLAP and anchored:
             break
         if attempt == SANITY_ATTEMPTS:
+            why = (f"only {overlap} of the top {SANITY_TOP} were in last week's top "
+                   f"{SANITY_PREV_DEPTH} (normally 4+)" if overlap < SANITY_MIN_OVERLAP else
+                   f"last week's #1 ({_domain(prev_urls[0])}) is not in the top {SANITY_ANCHOR_TOP}")
             raise SuspiciousFetchError(
-                f'only {overlap} of the top {SANITY_TOP} results for "{keyword}" were in last '
-                f"week's top {SANITY_PREV_DEPTH} (normally 4+) - ScaleSERP likely returned bad "
-                f'pages. Existing data left untouched; refetch later, or force-save if the SERP '
-                f'really did change.'
+                f'"{keyword}" results look wrong after {SANITY_ATTEMPTS} tries: {why}. ScaleSERP '
+                f'likely returned an off-topic SERP. Existing data left untouched; refetch later, '
+                f'or force-save if the SERP really did change.'
             )
 
     conn = sqlite3.connect(db_path)
