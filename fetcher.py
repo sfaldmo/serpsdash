@@ -201,9 +201,10 @@ def _overlap(all_results, prev_urls):
     return sum(u in prev_urls for u in top)
 
 
-def _collect_keyword(keyword, key):
+def _collect_keyword(keyword, key, use_max_page=True):
     """Pull up to MAX_PAGES of organic results for one keyword. Returns a list
-    of (position, google_page, result), densely ranked from 1."""
+    of (position, google_page, result), densely ranked from 1. With
+    `use_max_page=False`, skip phase 1 and page through one request at a time."""
     all_results = []
     seen_urls = set()
 
@@ -213,11 +214,15 @@ def _collect_keyword(keyword, key):
     # HF - and when it does, single-page fetching still works fine. So attempt it
     # once and, on any failure, fall through to the single-page loop below, which
     # does the whole job reliably. Never let a flaky max_page fail the keyword.
-    try:
-        organic = _fetch_serp(keyword, key, max_page=FIRST_BLOCK, attempts=1)
-        _collect(organic, all_results, seen_urls, fallback_page=1)
-    except FetchError:
-        pass  # max_page unavailable; the single-page loop covers pages 1..N
+    # A max_page response is only trustworthy if every result carries its real
+    # `page`; without it, deep pages get labelled page 1 and land in the top 10.
+    if use_max_page:
+        try:
+            organic = _fetch_serp(keyword, key, max_page=FIRST_BLOCK, attempts=1)
+            if organic and all(r.get('page') for r in organic if r.get('link')):
+                _collect(organic, all_results, seen_urls, fallback_page=1)
+        except FetchError:
+            pass  # max_page unavailable; the single-page loop covers pages 1..N
     # Deepest real page we actually got back (0 if phase 1 was skipped/failed, so
     # the loop starts at page 1; guards against max_page collapsing to one page).
     deepest = max((gp for _, gp, _ in all_results), default=0)
@@ -264,7 +269,9 @@ def fetch_keyword(keyword, week_date_str, db_path, api_key=None, force=False):
 
     prev_urls = None if force else _previous_urls(db_path, keyword, week_date_str)
     for attempt in range(1, SANITY_ATTEMPTS + 1):
-        all_results = _collect_keyword(keyword, key)
+        # Retries page one request at a time: a bad max_page response tends to
+        # come back bad again.
+        all_results = _collect_keyword(keyword, key, use_max_page=(attempt == 1))
         if prev_urls is None:
             break
         overlap = _overlap(all_results, prev_urls)
