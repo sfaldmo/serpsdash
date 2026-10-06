@@ -733,6 +733,49 @@ def api_fetch_job_status(job_id):
     return jsonify({'events': job['events'][since:], 'finished': job['finished']})
 
 
+@app.route('/api/debug_serp')
+def api_debug_serp():
+    """Raw ScaleSERP response for one keyword, for diagnosing bad fetches.
+    Read-only: saves nothing. ?keyword=...&page=N (single page) or &max_page=N."""
+    import urllib.parse
+    import urllib.request
+    from fetcher import SCALESERP_ENDPOINT
+    keyword = request.args.get('keyword', '')
+    if not keyword:
+        return jsonify({'error': 'keyword is required'}), 400
+    params = {'api_key': os.environ.get('SCALESERP_API_KEY', ''), 'q': keyword, 'num': 10,
+              'output': 'json', 'google_domain': 'google.com', 'gl': 'us', 'hl': 'en',
+              'device': 'desktop'}
+    for name in ('page', 'max_page'):
+        if request.args.get(name, type=int):
+            params[name] = request.args.get(name, type=int)
+    url = f'{SCALESERP_ENDPOINT}?{urllib.parse.urlencode(params)}'
+    with urllib.request.urlopen(url, timeout=90) as resp:
+        data = json.loads(resp.read().decode('utf-8'))
+
+    def scrub(v):
+        if isinstance(v, dict):
+            return {k: scrub(x) for k, x in v.items() if 'api_key' not in k}
+        if isinstance(v, list):
+            return [scrub(x) for x in v]
+        if isinstance(v, str) and params['api_key'] and params['api_key'] in v:
+            return v.replace(params['api_key'], 'REDACTED')
+        return v
+
+    data = scrub(data)
+    organic = data.get('organic_results') or []
+    return jsonify({
+        'request_info':       data.get('request_info'),
+        'search_parameters':  data.get('search_parameters'),
+        'search_metadata':    data.get('search_metadata'),
+        'search_information': data.get('search_information'),
+        'pagination':         data.get('pagination'),
+        'other_sections':     sorted(k for k in data if k != 'organic_results'),
+        'organic':            [{k: r.get(k) for k in ('position', 'position_overall', 'page', 'link', 'domain')}
+                               for r in organic],
+    })
+
+
 _BOOTED = time.time()
 
 
