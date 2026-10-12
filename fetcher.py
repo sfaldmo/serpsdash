@@ -25,17 +25,12 @@ KEYWORDS = [
 # returns ~5-10 organic results (SERP features eat organic slots, so a page is
 # never a clean 10) and pagination is mandatory.
 #
-# We fetch in two phases:
-#   Phase 1 - one `max_page` request for pages 1..FIRST_BLOCK. ScaleSERP pages
-#     server-side and tags every result with its true `page` and
-#     `position_overall`, so we get authoritative page boundaries in one call.
-#     max_page is capped at 5 for real-time searches.
-#   Phase 2 - if we still have fewer than TARGET_MIN results, keep pulling one
-#     page at a time (page 6, 7, ...) up to MAX_PAGES, labelling each with its
-#     request page, until we hit the target or results dry up. This also
-#     transparently recovers if a max_page request "collapses" to a single page
-#     (a rare ScaleSERP glitch) - the deep loop just refetches the missing pages.
-FIRST_BLOCK     = 5     # pages fetched in the single max_page request (API cap)
+# We fetch one page per request (1 ScaleSERP credit each):
+#   Phase 1 - page 1 alone, vetted against last week before anything deeper is
+#     fetched. ScaleSERP often serves an off-topic SERP; redrawing page 1 costs
+#     1 credit, where the old max_page=5 request cost 5 per attempt.
+#   Phase 2 - pages 2, 3, ... up to MAX_PAGES until we have TARGET_MIN results
+#     or results dry up.
 MAX_PAGES       = 10    # never page deeper than this
 TARGET_MIN      = 30    # stop early once a keyword reaches this many results
 DEEP_EMPTY_STOP = 2     # give up deep paging after this many consecutive empties
@@ -143,6 +138,9 @@ def _fetch_serp(keyword, key, max_page=None, page=None, attempts=None):
             raise
         except urllib.error.HTTPError as e:
             last_err = f'HTTP {e.code}'
+            if e.code == 402:
+                raise FetchError('ScaleSERP is out of credits (HTTP 402). Fetches will work '
+                                 'again after the monthly credit reset.') from e
             if e.code not in RETRY_STATUSES:
                 raise FetchError(f'HTTP {e.code}') from e
         except Exception as e:
@@ -220,31 +218,26 @@ def _overlap(all_results, prev_urls):
     return sum(u in prev for u in top)
 
 
-def _collect_keyword(keyword, key, use_max_page=True):
+def _collect_keyword(keyword, key, check=None):
     """Pull up to MAX_PAGES of organic results for one keyword. Returns a list
-    of (position, google_page, result), densely ranked from 1. With
-    `use_max_page=False`, skip phase 1 and page through one request at a time."""
-    all_results = []
-    seen_urls = set()
+    of (position, google_page, result), densely ranked from 1.
 
-    # Phase 1: TRY to pull pages 1..FIRST_BLOCK in one max_page request. This is
-    # only an optimisation (one HTTP round-trip, plus authoritative page/position
-    # fields). ScaleSERP's max_page is intermittently unavailable and returns code
-    # HF - and when it does, single-page fetching still works fine. So attempt it
-    # once and, on any failure, fall through to the single-page loop below, which
-    # does the whole job reliably. Never let a flaky max_page fail the keyword.
-    # A max_page response is only trustworthy if every result carries its real
-    # `page`; without it, deep pages get labelled page 1 and land in the top 10.
-    if use_max_page:
-        try:
-            organic = _fetch_serp(keyword, key, max_page=FIRST_BLOCK, attempts=1)
-            if organic and all(r.get('page') for r in organic if r.get('link')):
-                _collect(organic, all_results, seen_urls, fallback_page=1)
-        except FetchError:
-            pass  # max_page unavailable; the single-page loop covers pages 1..N
-    # Deepest real page we actually got back (0 if phase 1 was skipped/failed, so
-    # the loop starts at page 1; guards against max_page collapsing to one page).
-    deepest = max((gp for _, gp, _ in all_results), default=0)
+    `check(results)` vets page 1 before anything deeper is fetched: it returns
+    None if page 1 looks right, else a reason. Page 1 is redrawn up to
+    SANITY_ATTEMPTS times, then SuspiciousFetchError is raised. Each redraw costs
+    1 ScaleSERP credit instead of a whole multi-page fetch (~5)."""
+    # Phase 1: page 1 on its own, so a bad draw is cheap to throw away.
+    for attempt in range(1, SANITY_ATTEMPTS + 1):
+        all_results = []
+        seen_urls = set()
+        _collect(_fetch_serp(keyword, key, page=1), all_results, seen_urls, fallback_page=1)
+        problem = check(all_results) if check else None
+        if not problem:
+            break
+        if attempt == SANITY_ATTEMPTS:
+            raise SuspiciousFetchError(problem)
+        time.sleep(REQUEST_SPACING)
+    deepest = 1
 
     # Phase 2: keep pulling single pages until we hit TARGET_MIN or run dry.
     consecutive_empty = 0
@@ -287,25 +280,23 @@ def fetch_keyword(keyword, week_date_str, db_path, api_key=None, force=False):
         raise ValueError('SCALESERP_API_KEY environment variable not set')
 
     prev_urls = None if force else _previous_urls(db_path, keyword, week_date_str)
-    for attempt in range(1, SANITY_ATTEMPTS + 1):
-        # Retries page one request at a time, so each is a fresh draw from
-        # ScaleSERP rather than a repeat of the same multi-page request.
-        all_results = _collect_keyword(keyword, key, use_max_page=(attempt == 1))
+
+    def check(results):
         if prev_urls is None:
-            break
-        overlap = _overlap(all_results, prev_urls)
-        anchored = _anchor_held(all_results, prev_urls)
-        if overlap >= SANITY_MIN_OVERLAP and anchored:
-            break
-        if attempt == SANITY_ATTEMPTS:
+            return None
+        overlap = _overlap(results, prev_urls)
+        if overlap < SANITY_MIN_OVERLAP:
             why = (f"only {overlap} of the top {SANITY_TOP} were in last week's top "
-                   f"{SANITY_PREV_DEPTH} (normally 4+)" if overlap < SANITY_MIN_OVERLAP else
-                   f"last week's #1 ({_domain(prev_urls[0])}) is not in the top {SANITY_ANCHOR_TOP}")
-            raise SuspiciousFetchError(
-                f'"{keyword}" results look wrong after {SANITY_ATTEMPTS} tries: {why}. ScaleSERP '
+                   f"{SANITY_PREV_DEPTH} (normally 4+)")
+        elif not _anchor_held(results, prev_urls):
+            why = f"last week's #1 ({_domain(prev_urls[0])}) is not in the top {SANITY_ANCHOR_TOP}"
+        else:
+            return None
+        return (f'"{keyword}" results look wrong after {SANITY_ATTEMPTS} tries: {why}. ScaleSERP '
                 f'likely returned an off-topic SERP. Existing data left untouched; refetch later, '
-                f'or force-save if the SERP really did change.'
-            )
+                f'or force-save if the SERP really did change.')
+
+    all_results = _collect_keyword(keyword, key, check)
 
     conn = sqlite3.connect(db_path)
     try:
