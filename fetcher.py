@@ -25,12 +25,16 @@ KEYWORDS = [
 # returns ~5-10 organic results (SERP features eat organic slots, so a page is
 # never a clean 10) and pagination is mandatory.
 #
-# We fetch one page per request (1 ScaleSERP credit each):
-#   Phase 1 - page 1 alone, vetted against last week before anything deeper is
-#     fetched. ScaleSERP often serves an off-topic SERP; redrawing page 1 costs
-#     1 credit, where the old max_page=5 request cost 5 per attempt.
-#   Phase 2 - pages 2, 3, ... up to MAX_PAGES until we have TARGET_MIN results
-#     or results dry up.
+# We fetch in two phases:
+#   Phase 1 - one max_page request for pages 1..FIRST_BLOCK (5 credits), with
+#     page 1 vetted against last week. All five pages must come from the same
+#     request: each ScaleSERP request is an independent draw, and when pages
+#     were fetched one at a time (2026-10-12) a vetted page 1 got paired with
+#     off-topic pages 2-5 - 3-5x the usual share of "new" deep results. A bad
+#     draw is redrawn whole, up to SANITY_ATTEMPTS times.
+#   Phase 2 - if we still have fewer than TARGET_MIN results, pull single pages
+#     after the deepest one we got, up to MAX_PAGES.
+FIRST_BLOCK     = 5     # pages fetched in the single max_page request (API cap)
 MAX_PAGES       = 10    # never page deeper than this
 TARGET_MIN      = 30    # stop early once a keyword reaches this many results
 DEEP_EMPTY_STOP = 2     # give up deep paging after this many consecutive empties
@@ -58,7 +62,7 @@ RETRY_STATUSES  = {408, 429, 500, 502, 503, 504}
 SANITY_TOP          = 10    # fresh results compared
 SANITY_PREV_DEPTH   = 30    # ...against this many of last week's results
 SANITY_MIN_OVERLAP  = 3
-SANITY_ATTEMPTS     = 4     # full refetches before giving up
+SANITY_ATTEMPTS     = 3     # full refetches before giving up (5 credits each)
 SANITY_ANCHOR_TOP   = 5     # last week's #1 URL must be in the new top 5
 # 2026-10-06: back-to-back identical ScaleSERP requests for "Riverbend Ranch"
 # flipped between the real SERP and an off-topic one (TN Facebook videos,
@@ -220,22 +224,30 @@ def _collect_keyword(keyword, key, check=None):
     """Pull up to MAX_PAGES of organic results for one keyword. Returns a list
     of (position, google_page, result), densely ranked from 1.
 
-    `check(results)` vets page 1 before anything deeper is fetched: it returns
-    None if page 1 looks right, else a reason. Page 1 is redrawn up to
-    SANITY_ATTEMPTS times, then SuspiciousFetchError is raised. Each redraw costs
-    1 ScaleSERP credit instead of a whole multi-page fetch (~5)."""
-    # Phase 1: page 1 on its own, so a bad draw is cheap to throw away.
+    `check(results)` vets page 1 of each pages-1..FIRST_BLOCK draw: it returns
+    None if it looks right, else a reason. A bad draw is redrawn whole up to
+    SANITY_ATTEMPTS times, then SuspiciousFetchError is raised."""
     for attempt in range(1, SANITY_ATTEMPTS + 1):
         all_results = []
         seen_urls = set()
-        _collect(_fetch_serp(keyword, key, page=1), all_results, seen_urls, fallback_page=1)
-        problem = check(all_results) if check else None
+        try:
+            organic = _fetch_serp(keyword, key, max_page=FIRST_BLOCK)
+        except FetchError:
+            organic = []
+        # Results without a real `page` can't be placed, so treat the draw as
+        # failed and fall back to page 1 alone (deeper pages come in phase 2).
+        if organic and all(r.get('page') for r in organic if r.get('link')):
+            _collect(organic, all_results, seen_urls, fallback_page=1)
+        else:
+            _collect(_fetch_serp(keyword, key, page=1), all_results, seen_urls, fallback_page=1)
+        page1 = [t for t in all_results if t[1] == 1]
+        problem = check(page1) if check else None
         if not problem:
             break
         if attempt == SANITY_ATTEMPTS:
             raise SuspiciousFetchError(problem)
         time.sleep(REQUEST_SPACING)
-    deepest = 1
+    deepest = max((gp for _, gp, _ in all_results), default=1)
 
     # Phase 2: keep pulling single pages until we hit TARGET_MIN or run dry.
     consecutive_empty = 0
